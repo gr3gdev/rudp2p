@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::fmt::{Debug, Formatter};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Instant;
 
@@ -6,25 +8,31 @@ use message::PeerMessage;
 
 use crate::peer::event::{AsBytes, CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, MESSAGE};
 use crate::server::{Event, Server, ServerStatus, Udp};
-use crate::utils::{get_optional_shared, get_safe, new_optional_closure, new_thread_safe, OptionalClosure, set_optional_closure, ThreadSafe};
+use crate::utils::{OptionalClosure, ThreadSafe};
 
 mod event;
 pub mod message;
 
 pub trait Dispatch {
+    /// Manage the exchanges with peers.
     fn routing(&mut self);
 }
 
 pub trait Exchange {
+    /// Send a message to all peers.
     fn send_to_all(&self, message: PeerMessage) -> ();
-    fn connect<D>(&mut self, dispatcher: &D) where D: ServerStatus;
+    /// Send a message to a specific peer.
+    fn send_to(&self, message: PeerMessage, addr: &SocketAddr) -> ();
+    /// Connect with an other server.
+    fn connect(&mut self, addr: &SocketAddr) -> ();
 }
 
 pub struct Peer {
     pub uid: String,
     server: Udp,
+    dispatcher_addr: RefCell<Option<SocketAddr>>,
     peers: ThreadSafe<Vec<SocketAddr>>,
-    on_message_received: OptionalClosure<dyn FnMut(&PeerMessage) -> () + Send + Sync>,
+    on_message_received: OptionalClosure<dyn FnMut(&PeerMessage, &SocketAddr) -> () + Send + Sync>,
     on_peer_connected: OptionalClosure<dyn FnMut(&SocketAddr) -> () + Send + Sync>,
     on_peer_disconnected: OptionalClosure<dyn FnMut(&SocketAddr) -> () + Send + Sync>,
 }
@@ -44,11 +52,11 @@ fn send_message_to_peers(socket: &UdpSocket, peer_event: PeerEvent, peers: &Vec<
 impl Dispatch for Peer {
     fn routing(&mut self) {
         let addr = self.addr().clone();
-        let shared_peers = get_safe(&self.peers);
-        let shared_message = get_optional_shared(&self.on_message_received);
-        let shared_connected = get_optional_shared(&self.on_peer_connected);
-        let shared_disconnected = get_optional_shared(&self.on_peer_disconnected);
-        self.server.set_observer(Box::new(move |e: &Event, socket: &UdpSocket| {
+        let shared_peers = self.peers.clone();
+        let shared_message = self.on_message_received.shared();
+        let shared_connected = self.on_peer_connected.shared();
+        let shared_disconnected = self.on_peer_disconnected.shared();
+        self.server.set_on_received(Box::new(move |e: &Event, socket: &UdpSocket| {
             let mut peers = shared_peers.lock().unwrap();
             let guard_message = shared_message.lock().unwrap();
             let guard_connected = shared_connected.lock().unwrap();
@@ -69,12 +77,14 @@ impl Dispatch for Peer {
             }
             if e.content[0] == CONNECTED {
                 let address = get_address(e);
-                if address != addr && !peers.contains(&address) {
+                if !peers.contains(&address) {
                     peers.push(address);
                     if let Some(ref mut connected) = *guard_connected.borrow_mut() {
                         connected(&address);
                     }
-                    socket.send_to(PeerEvent::connected(addr).as_bytes().as_slice(), address).unwrap();
+                    if address != addr {
+                        socket.send_to(PeerEvent::connected(addr).as_bytes().as_slice(), address).unwrap();
+                    }
                 }
             }
             if e.content[0] == DISCONNECTED {
@@ -88,7 +98,9 @@ impl Dispatch for Peer {
             }
             if e.content[0] == MESSAGE {
                 if let Some(ref mut observer) = *guard_message.borrow_mut() {
-                    observer(&PeerMessage::parse(e.content[1..e.content.len()].to_vec()));
+                    observer(&PeerMessage::parse(e.content[1..e.content.len()].to_vec()), &e.sender);
+                } else {
+                    println!("No observer for {}", addr);
                 }
             }
         }));
@@ -100,10 +112,11 @@ impl Server<Peer> for Peer {
         Peer {
             uid: Instant::now().elapsed().as_millis().to_string(),
             server: Udp::new(port),
-            peers: new_thread_safe(Vec::new()),
-            on_message_received: new_optional_closure(None),
-            on_peer_connected: new_optional_closure(None),
-            on_peer_disconnected: new_optional_closure(None),
+            dispatcher_addr: RefCell::new(None),
+            peers: ThreadSafe::new(Vec::new()),
+            on_message_received: OptionalClosure::new(None),
+            on_peer_connected: OptionalClosure::new(None),
+            on_peer_disconnected: OptionalClosure::new(None),
         }
     }
 
@@ -115,10 +128,9 @@ impl Server<Peer> for Peer {
     }
 
     fn close(&self) -> () {
-        let shared_peers = get_safe(&self.peers);
-        let recipients = shared_peers.lock().unwrap();
-        for recipient in recipients.iter() {
-            self.send(PeerEvent::disconnecting().as_bytes().as_slice(), recipient);
+        let addr = self.dispatcher_addr.borrow_mut();
+        if addr.is_some() {
+            self.send(PeerEvent::disconnecting().as_bytes().as_slice(), &addr.unwrap());
         }
         self.server.close();
     }
@@ -130,16 +142,29 @@ impl Server<Peer> for Peer {
 
 impl Exchange for Peer {
     fn send_to_all(&self, message: PeerMessage) -> () {
-        let shared_peers = get_safe(&self.peers);
+        let shared_peers = self.peers.clone();
         let recipients = shared_peers.lock().unwrap();
-        for other in recipients.iter() {
-            self.server.send(message.to_event().as_bytes().as_slice(), other)
+        for msg in PeerMessage::split(message, 1024) {
+            for other in recipients.iter() {
+                if other != &self.addr() {
+                    self.server.send(msg.to_event().as_bytes().as_slice(), other)
+                }
+            }
         }
     }
 
-    fn connect<D>(&mut self, dispatcher: &D) where D: ServerStatus {
+    fn send_to(&self, message: PeerMessage, addr: &SocketAddr) -> () {
+        for msg in PeerMessage::split(message, 1024) {
+            if addr != &self.addr() {
+                self.server.send(msg.to_event().as_bytes().as_slice(), addr)
+            }
+        }
+    }
+
+    fn connect(&mut self, addr: &SocketAddr) -> () {
         self.start();
-        self.server.send(PeerEvent::connecting().as_bytes().as_slice(), &dispatcher.addr());
+        self.dispatcher_addr = RefCell::new(Some(addr.clone()));
+        self.server.send(PeerEvent::connecting().as_bytes().as_slice(), addr);
     }
 }
 
@@ -154,15 +179,21 @@ impl ServerStatus for Peer {
 }
 
 impl Peer {
-    pub fn set_on_message_received<F>(&mut self, on_message_received: F) where F: FnMut(&PeerMessage) -> () + Send + Sync + 'static {
-        set_optional_closure(&self.on_message_received, Box::new(on_message_received));
+    pub fn set_on_message_received<F>(&mut self, on_message_received: F) where F: FnMut(&PeerMessage, &SocketAddr) -> () + Send + Sync + 'static {
+        OptionalClosure::set(&self.on_message_received, Box::new(on_message_received));
     }
 
     pub fn set_on_peer_connected<F>(&mut self, on_peer_connected: F) where F: FnMut(&SocketAddr) -> () + Send + Sync + 'static {
-        set_optional_closure(&self.on_peer_connected, Box::new(on_peer_connected));
+        OptionalClosure::set(&self.on_peer_connected, Box::new(on_peer_connected));
     }
 
     pub fn set_on_peer_disconnected<F>(&mut self, on_peer_disconnected: F) where F: FnMut(&SocketAddr) -> () + Send + Sync + 'static {
-        set_optional_closure(&self.on_peer_disconnected, Box::new(on_peer_disconnected));
+        OptionalClosure::set(&self.on_peer_disconnected, Box::new(on_peer_disconnected));
+    }
+}
+
+impl Debug for Peer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.uid)
     }
 }

@@ -7,11 +7,14 @@ pub static MESSAGE: u8 = 3;
 pub static DISCONNECTED: u8 = 9;
 
 pub trait AsBytes {
+    /// Convert struct to bytes u8.
     fn as_bytes(&self) -> Vec<u8>;
 }
 
 pub struct PeerEvent {
+    /// Code of the peer event.
     pub code: u8,
+    /// Content message of the peer event.
     pub message: Vec<u8>,
 }
 
@@ -27,6 +30,7 @@ impl AsBytes for PeerEvent {
 }
 
 impl PeerEvent {
+    /// Event: connecting.
     pub fn connecting() -> PeerEvent {
         PeerEvent {
             code: CONNECTING,
@@ -34,6 +38,7 @@ impl PeerEvent {
         }
     }
 
+    /// Event: disconnecting.
     pub fn disconnecting() -> PeerEvent {
         PeerEvent {
             code: DISCONNECTING,
@@ -41,6 +46,7 @@ impl PeerEvent {
         }
     }
 
+    /// Event: connected.
     pub fn connected(addr: SocketAddr) -> PeerEvent {
         PeerEvent {
             code: CONNECTED,
@@ -48,6 +54,7 @@ impl PeerEvent {
         }
     }
 
+    /// Event: disconnected.
     pub fn disconnected(addr: SocketAddr) -> PeerEvent {
         PeerEvent {
             code: DISCONNECTED,
@@ -55,6 +62,7 @@ impl PeerEvent {
         }
     }
 
+    /// Event: message.
     pub fn message(message: Vec<u8>) -> PeerEvent {
         PeerEvent {
             code: MESSAGE,
