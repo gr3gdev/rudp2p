@@ -15,8 +15,6 @@ pub trait ServerStatus {
 }
 
 pub trait Server<T> {
-    /// Create an instance of Server with the `port` passed in parameter.
-    fn new(port: u16) -> T;
     /// Start the server.
     fn start(&mut self) -> ();
     /// Stop the server.
@@ -55,21 +53,6 @@ pub struct Udp {
 }
 
 impl Server<Udp> for Udp {
-    fn new(port: u16) -> Udp {
-        let addr = "127.0.0.1".parse::<IpAddr>()
-            .expect("Error on IP");
-        let socket_addr = SocketAddr::new(addr, port);
-        let socket = UdpSocket::bind(socket_addr).unwrap();
-        socket.set_nonblocking(true).unwrap();
-        Udp {
-            socket,
-            on_started: OptionalClosure::new(None),
-            on_stopped: OptionalClosure::new(None),
-            on_received: OptionalClosure::new(None),
-            job: None,
-        }
-    }
-
     fn start(&mut self) -> () {
         let socket = self.socket.try_clone().unwrap();
         let socket_addr = socket.local_addr().unwrap();
@@ -138,6 +121,21 @@ impl ServerStatus for Udp {
 }
 
 impl Udp {
+    pub(crate) fn new(port: u16) -> Udp {
+        let addr = "127.0.0.1".parse::<IpAddr>()
+            .expect("Error on IP");
+        let socket_addr = SocketAddr::new(addr, port);
+        let socket = UdpSocket::bind(socket_addr).unwrap();
+        socket.set_nonblocking(true).unwrap();
+        Udp {
+            socket,
+            on_started: OptionalClosure::new(None),
+            on_stopped: OptionalClosure::new(None),
+            on_received: OptionalClosure::new(None),
+            job: None,
+        }
+    }
+
     pub fn set_on_received<F>(&mut self, observer: F) where F: FnMut(&Event, &UdpSocket) + Send + Sync + 'static {
         OptionalClosure::set(&self.on_received, Box::new(observer));
     }

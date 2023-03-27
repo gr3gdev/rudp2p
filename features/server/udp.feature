@@ -1,7 +1,9 @@
-Feature: Test UDP Server
+Feature: UDP Server
 
-  Scenario: Exchange between two servers
-    Given a server "S1" is started on port 9001
-    And a server "S2" is started on port 9002
-    When "S1" sends "Hello I am S1" to "S2"
-    Then "S2" receives "Hello I am S1" from "S1"
+  Scenario: Send text to another server
+    Given the following servers are started
+    | Name | Port |
+    | S1   | 9001 |
+    | S2   | 9002 |
+    When the server "S1" sends "Hello I am S1" to the server "S2"
+    Then the server "S2" receives "Hello I am S1" from the server "S1"

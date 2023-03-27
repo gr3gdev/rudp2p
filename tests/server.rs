@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use cucumber::{given, then, when, World};
+use cucumber::{gherkin::Step, given, then, when, World};
+use futures::future::LocalBoxFuture;
+use futures::FutureExt;
 
 use rudp2plib::server::{Event, Server, ServerStatus, Udp};
 use rudp2plib::utils::ThreadSafe;
@@ -38,32 +40,46 @@ impl ServersWorld {
             on_received: ThreadSafe::new(Vec::new()),
         }
     }
+    fn close(&self) -> LocalBoxFuture<()> {
+        async {
+            for udp in self.servers.values() {
+                udp.close();
+                wait_while_condition("wait server close", &|| udp.alive());
+            }
+        }.boxed_local()
+    }
 }
 
-#[given(expr = "a server {string} is started on port {int}")]
-async fn start_server(w: &mut ServersWorld, name: String, port: u16) {
-    let mut server = Udp::new(port);
-    let shared_name = name.clone();
-    let shared_received = w.on_received.clone();
-    server.set_on_received(move |e, _socket| {
-        let mut guard = shared_received.lock().unwrap();
-        guard.push(ServerData {
-            server_name: shared_name.as_bytes().to_vec(),
-            event: e.clone(),
-        })
-    });
-    server.start();
-    w.servers.insert(name, server);
+#[given(expr = "the following servers are started")]
+async fn start_server(w: &mut ServersWorld, step: &Step) {
+    if let Some(table) = step.table.as_ref() {
+        for row in table.rows.iter().skip(1) { // NOTE: skip header
+            let name = &row[0];
+            let port = row[1].parse::<u16>().unwrap();
+            let mut server = Udp::new(port);
+            let shared_name = name.clone();
+            let shared_received = w.on_received.clone();
+            server.set_on_received(move |e, _socket| {
+                let mut guard = shared_received.lock().unwrap();
+                guard.push(ServerData {
+                    server_name: shared_name.as_bytes().to_vec(),
+                    event: e.clone(),
+                })
+            });
+            server.start();
+            w.servers.insert(name.clone(), server);
+        }
+    }
 }
 
-#[when(expr = "{string} sends {string} to {string}")]
+#[when(expr = "the server {string} sends {string} to the server {string}")]
 async fn server_send_message(w: &mut ServersWorld, s1: String, message: String, s2: String) {
     let server1 = w.servers.get(&s1).unwrap();
     let server2 = w.servers.get(&s2).unwrap();
     server1.send(message.as_bytes(), &server2.addr());
 }
 
-#[then(expr = "{string} receives {string} from {string}")]
+#[then(expr = "the server {string} receives {string} from the server {string}")]
 async fn server_receive_message(w: &mut ServersWorld, s2: String, message: String, s1: String) {
     let server1 = w.servers.get(&s1).unwrap();
     let addr = server1.addr();
@@ -78,5 +94,9 @@ async fn server_receive_message(w: &mut ServersWorld, s2: String, message: Strin
 }
 
 fn main() {
-    futures::executor::block_on(ServersWorld::run("features/server"));
+    futures::executor::block_on(ServersWorld::cucumber()
+        .after(|_feature, _rule, _scenario, _ev, world| {
+            world.unwrap().close()
+        })
+        .run_and_exit("features/server"));
 }

@@ -87,7 +87,7 @@ impl PeerMessage {
         messages
     }
 
-    pub fn to_event(&self) -> PeerEvent {
+    pub fn to_event(&self, uid: &String) -> PeerEvent {
         let mut data: Vec<u8> = Vec::new();
         let size = self.uid.len() as u8;
         data.push(size);
@@ -103,10 +103,10 @@ impl PeerMessage {
         for c in self.content.clone() {
             data.push(c);
         }
-        PeerEvent::message(data)
+        PeerEvent::message(uid.clone(), data)
     }
 
-    pub fn parse(data: Vec<u8>) -> PeerMessage {
+    pub fn parse(data: &Vec<u8>) -> PeerMessage {
         let uid_size = data[0] as usize;
         let start = usize::from_ne_bytes([data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]]);
         let total = usize::from_ne_bytes([data[9], data[10], data[11], data[12], data[13], data[14], data[15], data[16]]);
