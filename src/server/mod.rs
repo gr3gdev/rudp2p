@@ -5,7 +5,11 @@ use std::thread::JoinHandle;
 
 use crate::utils::OptionalClosure;
 
-static END: &[u8] = "STOPPING SERVER PLEASE".as_bytes();
+// CONSTANTS
+
+static END: &[u8] = "PL3AZE 5T0P".as_bytes();
+
+// TRAIT
 
 pub trait ServerStatus {
     /// Return `true` if Server is alive, else `false`.
@@ -14,29 +18,29 @@ pub trait ServerStatus {
     fn addr(&self) -> SocketAddr;
 }
 
+pub trait Message {
+    /// Message exchanged on the server.
+    fn content(&self) -> Vec<u8>;
+}
+
 pub trait Server<T> {
     /// Start the server.
     fn start(&mut self) -> ();
     /// Stop the server.
     fn close(&self) -> ();
     /// Send a `msg` to the server with address `addr`.
-    fn send(&self, msg: &[u8], addr: &SocketAddr) -> ();
+    fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message;
 }
+
+// STRUCT
+
+struct StopMessage {}
 
 pub struct Event {
     /// Content of the event.
     pub content: Vec<u8>,
     /// Who has triggered this event.
     pub sender: SocketAddr,
-}
-
-impl Clone for Event {
-    fn clone(&self) -> Self {
-        Event {
-            content: self.content.clone(),
-            sender: self.sender.clone(),
-        }
-    }
 }
 
 pub struct Udp {
@@ -50,6 +54,23 @@ pub struct Udp {
     on_received: OptionalClosure<dyn FnMut(&Event, &UdpSocket) + Send + Sync>,
     /// Thread job.
     job: Option<JoinHandle<()>>,
+}
+
+// IMPL
+
+impl Message for StopMessage {
+    fn content(&self) -> Vec<u8> {
+        END.to_vec()
+    }
+}
+
+impl Clone for Event {
+    fn clone(&self) -> Self {
+        Event {
+            content: self.content.clone(),
+            sender: self.sender.clone(),
+        }
+    }
 }
 
 impl Server<Udp> for Udp {
@@ -95,14 +116,16 @@ impl Server<Udp> for Udp {
 
     fn close(&self) -> () {
         let address = self.socket.local_addr().unwrap();
-        self.send(END, &address);
+        self.send(StopMessage {}, &address);
     }
 
-    fn send(&self, msg: &[u8], addr: &SocketAddr) -> () {
-        if msg.len() > 2048 {
+    fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message {
+        let content = msg.content();
+        let data = content.as_slice();
+        if data.len() > 2048 {
             panic!("Error : the message is too large !")
         }
-        self.socket.send_to(msg, addr).unwrap();
+        self.socket.send_to(data, addr).unwrap();
     }
 }
 

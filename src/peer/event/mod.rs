@@ -1,4 +1,7 @@
 use std::net::SocketAddr;
+use crate::server::Message;
+
+// CONSTANTS
 
 pub static DISCONNECTING: u8 = 0;
 pub static CONNECTING: u8 = 1;
@@ -6,10 +9,31 @@ pub static CONNECTED: u8 = 2;
 pub static MESSAGE: u8 = 3;
 pub static DISCONNECTED: u8 = 9;
 
+// COMMON FUNCTIONS
+
+fn init_with_data(uid: String, list: Vec<u8>) -> Vec<u8> {
+    let mut data = Vec::new();
+    let uid_size = uid.len() as u8;
+    data.push(uid_size);
+    for b in uid.as_bytes().to_vec() {
+        data.push(b);
+    }
+    if !list.is_empty() {
+        for b in list {
+            data.push(b);
+        }
+    }
+    data
+}
+
+// TRAIT
+
 pub trait AsBytes {
     /// Convert struct to bytes u8.
     fn as_bytes(&self) -> Vec<u8>;
 }
+
+// STRUCT
 
 pub struct PeerEvent {
     /// Code of the peer event.
@@ -17,6 +41,15 @@ pub struct PeerEvent {
     /// Content message of the peer event.
     pub message: Vec<u8>,
 }
+
+pub struct PeerConnecting {
+    /// Uid of the peer that connects.
+    pub uid: String,
+    /// Whitelist of Uid with whom peer can communicate.
+    pub white_list: Vec<String>,
+}
+
+// IMPL
 
 impl AsBytes for PeerEvent {
     fn as_bytes(&self) -> Vec<u8> {
@@ -27,11 +60,6 @@ impl AsBytes for PeerEvent {
         }
         data
     }
-}
-
-pub struct PeerConnecting {
-    pub uid: String,
-    pub white_list: Vec<String>,
 }
 
 impl PeerConnecting {
@@ -52,21 +80,6 @@ impl PeerConnecting {
         }
         list
     }
-}
-
-fn init_with_data(uid: String, list: Vec<u8>) -> Vec<u8> {
-    let mut data = Vec::new();
-    let uid_size = uid.len() as u8;
-    data.push(uid_size);
-    for b in uid.as_bytes().to_vec() {
-        data.push(b);
-    }
-    if !list.is_empty() {
-        for b in list {
-            data.push(b);
-        }
-    }
-    data
 }
 
 impl PeerEvent {
@@ -135,5 +148,11 @@ impl PeerEvent {
             code: MESSAGE,
             message: init_with_data(uid, message),
         }
+    }
+}
+
+impl Message for PeerEvent {
+    fn content(&self) -> Vec<u8> {
+        self.as_bytes()
     }
 }

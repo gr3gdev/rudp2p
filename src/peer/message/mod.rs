@@ -5,6 +5,8 @@ use std::time::SystemTime;
 use crate::peer::event::PeerEvent;
 use crate::utils::{read_file, write_file};
 
+// STRUCT
+
 pub struct PeerMessage {
     /// UID of the message.
     pub uid: Vec<u8>,
@@ -15,6 +17,8 @@ pub struct PeerMessage {
     /// Part of the content message.
     pub content: Vec<u8>,
 }
+
+// IMPL
 
 impl Clone for PeerMessage {
     fn clone(&self) -> Self {

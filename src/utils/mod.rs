@@ -8,6 +8,8 @@ use std::sync::{Arc, LockResult, Mutex, MutexGuard};
 // Arc : permet de partager la liste entre plusieurs threads
 // Mutex : permet de verrouiller la liste pour garantir l'accès exclusif aux threads
 
+// COMMON FUNCTIONS
+
 /// Read a file into Vec<u8> from a path.
 pub fn read_file(path: &str) -> Vec<u8> {
     let mut f = File::open(path).expect(format!("File not found : {}", path).as_str());
@@ -24,11 +26,20 @@ pub fn write_file(data: &[u8], path: &str) -> File {
     file
 }
 
+// STRUCT
+
 /// ThreadSafe data, use Arc and Mutex.
 pub struct ThreadSafe<T> {
     /// ThreadSafe data.
     data: Arc<Mutex<T>>,
 }
+
+pub struct OptionalClosure<T: ?Sized> {
+    /// Optional closure.
+    data: ThreadSafe<RefCell<Option<Box<T>>>>,
+}
+
+// IMPL
 
 impl<T> ThreadSafe<T> {
     pub fn new(val: T) -> ThreadSafe<T> {
@@ -44,11 +55,6 @@ impl<T> ThreadSafe<T> {
     pub fn lock(&self) -> LockResult<MutexGuard<'_, T>> {
         self.data.lock()
     }
-}
-
-pub struct OptionalClosure<T: ?Sized> {
-    /// Optional closure.
-    data: ThreadSafe<RefCell<Option<Box<T>>>>,
 }
 
 impl<T: ?Sized> OptionalClosure<T> {

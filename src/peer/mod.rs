@@ -8,11 +8,24 @@ use event::PeerEvent;
 use message::PeerMessage;
 
 use crate::peer::event::{AsBytes, CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, MESSAGE, PeerConnecting};
-use crate::server::{Event, Server, ServerStatus, Udp};
+use crate::server::{Event, Message, Server, ServerStatus, Udp};
 use crate::utils::{OptionalClosure, ThreadSafe};
 
 mod event;
 pub mod message;
+
+// COMMON FUNCTIONS
+
+fn send_message_to_peers(socket: &UdpSocket, peer_event: PeerEvent, peers: &Vec<SimplePeer>, white_list: Vec<String>) {
+    println!("send_message_to_peers {} {:?} {:?}", socket.local_addr().unwrap(), peers, white_list);
+    for peer in peers {
+        if white_list.is_empty() || white_list.contains(&peer.uid) {
+            socket.send_to(peer_event.as_bytes().as_slice(), peer.addr).unwrap();
+        }
+    }
+}
+
+// TRAIT
 
 pub trait Dispatch {
     /// Manage the exchanges with peers.
@@ -28,10 +41,33 @@ pub trait Exchange {
     fn connect(&mut self, addr: &SocketAddr, white_list: Vec<String>) -> ();
 }
 
+// STRUCT
+
 struct SimplePeer {
+    /// Uid.
     uid: String,
+    /// Address of the peer.
     addr: SocketAddr,
 }
+
+pub struct Peer {
+    /// Uid.
+    pub uid: String,
+    /// UDP Server used by the peer to communicate.
+    server: Udp,
+    /// Address of the dispatch (optional).
+    dispatcher_addr: RefCell<Option<SocketAddr>>,
+    /// List of the other peers.
+    peers: ThreadSafe<Vec<SimplePeer>>,
+    /// Listener trigger when a message is received.
+    on_message_received: OptionalClosure<dyn FnMut(&PeerMessage, &String) -> () + Send + Sync>,
+    /// Listener trigger when a peer is connected.
+    on_peer_connected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
+    /// Listener trigger when a peer is disconnected.
+    on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
+}
+
+// IMPL
 
 impl Debug for SimplePeer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -42,25 +78,6 @@ impl Debug for SimplePeer {
 impl SimplePeer {
     fn exists(list: &MutexGuard<Vec<SimplePeer>>, uid: &String) -> bool {
         list.iter().find(|p| p.uid.eq(uid)).is_some()
-    }
-}
-
-pub struct Peer {
-    pub uid: String,
-    server: Udp,
-    dispatcher_addr: RefCell<Option<SocketAddr>>,
-    peers: ThreadSafe<Vec<SimplePeer>>,
-    on_message_received: OptionalClosure<dyn FnMut(&PeerMessage, &String) -> () + Send + Sync>,
-    on_peer_connected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
-    on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
-}
-
-fn send_message_to_peers(socket: &UdpSocket, peer_event: PeerEvent, peers: &Vec<SimplePeer>, white_list: Vec<String>) {
-    println!("send_message_to_peers {} {:?} {:?}", socket.local_addr().unwrap(), peers, white_list);
-    for peer in peers {
-        if white_list.is_empty() || white_list.contains(&peer.uid) {
-            socket.send_to(peer_event.as_bytes().as_slice(), peer.addr).unwrap();
-        }
     }
 }
 
@@ -144,12 +161,12 @@ impl Server<Peer> for Peer {
     fn close(&self) -> () {
         let addr = self.dispatcher_addr.borrow_mut();
         if addr.is_some() {
-            self.send(PeerEvent::disconnecting(self.uid.clone()).as_bytes().as_slice(), &addr.unwrap());
+            self.send(PeerEvent::disconnecting(self.uid.clone()), &addr.unwrap());
         }
         self.server.close();
     }
 
-    fn send(&self, msg: &[u8], addr: &SocketAddr) -> () {
+    fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message {
         self.server.send(msg, addr)
     }
 }
@@ -161,7 +178,7 @@ impl Exchange for Peer {
         for msg in PeerMessage::split(message, 1024) {
             for other in recipients.iter() {
                 if other.uid.ne(&self.uid) {
-                    self.server.send(msg.to_event(&self.uid).as_bytes().as_slice(), &other.addr)
+                    self.server.send(msg.to_event(&self.uid), &other.addr)
                 }
             }
         }
@@ -170,7 +187,7 @@ impl Exchange for Peer {
     fn send_to(&self, message: PeerMessage, addr: &SocketAddr) -> () {
         for msg in PeerMessage::split(message, 1024) {
             if addr != &self.addr() {
-                self.server.send(msg.to_event(&self.uid).as_bytes().as_slice(), addr)
+                self.server.send(msg.to_event(&self.uid), addr)
             }
         }
     }
@@ -181,7 +198,7 @@ impl Exchange for Peer {
         self.server.send(PeerEvent::connecting(PeerConnecting {
             uid: self.uid.clone(),
             white_list,
-        }).as_bytes().as_slice(), addr);
+        }), addr);
     }
 }
 
