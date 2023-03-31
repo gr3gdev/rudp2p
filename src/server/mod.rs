@@ -1,26 +1,67 @@
 use std::{io, thread};
+use std::fmt::{Debug, Formatter};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::thread::JoinHandle;
 
-use crate::utils::{get_optional_shared, new_optional_closure, OptionalClosure, set_optional_closure};
+use crate::utils::OptionalClosure;
 
-pub static END: &[u8] = "STOPPING SERVER PLEASE".as_bytes();
+// CONSTANTS
+
+static END: &[u8] = "PL3AZE 5T0P".as_bytes();
+
+// TRAIT
 
 pub trait ServerStatus {
+    /// Return `true` if Server is alive, else `false`.
     fn alive(&self) -> bool;
+    /// Return the `SocketAddr` of the Server.
     fn addr(&self) -> SocketAddr;
 }
 
-pub trait Server<T> {
-    fn new(port: u16) -> T;
-    fn start(&mut self) -> ();
-    fn close(&self) -> ();
-    fn send(&self, msg: &[u8], addr: &SocketAddr) -> ();
+pub trait Message {
+    /// Message exchanged on the server.
+    fn content(&self) -> Vec<u8>;
 }
 
+pub trait Server<T> {
+    /// Start the server.
+    fn start(&mut self) -> ();
+    /// Stop the server.
+    fn close(&self) -> ();
+    /// Send a `msg` to the server with address `addr`.
+    fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message;
+}
+
+// STRUCT
+
+struct StopMessage {}
+
 pub struct Event {
+    /// Content of the event.
     pub content: Vec<u8>,
+    /// Who has triggered this event.
     pub sender: SocketAddr,
+}
+
+pub struct Udp {
+    /// UdpSocket used by the Udp server.
+    socket: UdpSocket,
+    /// Observer : trigger when server is started.
+    on_started: OptionalClosure<dyn FnMut(&SocketAddr) + Send + Sync>,
+    /// Observer : trigger when server is stopped.
+    on_stopped: OptionalClosure<dyn FnMut(&SocketAddr) + Send + Sync>,
+    /// Observer : trigger when server has received a message.
+    on_received: OptionalClosure<dyn FnMut(&Event, &UdpSocket) + Send + Sync>,
+    /// Thread job.
+    job: Option<JoinHandle<()>>,
+}
+
+// IMPL
+
+impl Message for StopMessage {
+    fn content(&self) -> Vec<u8> {
+        END.to_vec()
+    }
 }
 
 impl Clone for Event {
@@ -32,37 +73,14 @@ impl Clone for Event {
     }
 }
 
-pub struct Udp {
-    socket: UdpSocket,
-    on_started: OptionalClosure<dyn FnMut(&SocketAddr) + Send + Sync>,
-    on_stopped: OptionalClosure<dyn FnMut(&SocketAddr) + Send + Sync>,
-    observer: OptionalClosure<dyn FnMut(&Event, &UdpSocket) + Send + Sync>,
-    job: Option<JoinHandle<()>>,
-}
-
 impl Server<Udp> for Udp {
-    fn new(port: u16) -> Udp {
-        let addr = "127.0.0.1".parse::<IpAddr>()
-            .expect("Error on IP");
-        let socket_addr = SocketAddr::new(addr, port);
-        let socket = UdpSocket::bind(socket_addr).unwrap();
-        socket.set_nonblocking(true).unwrap();
-        Udp {
-            socket,
-            on_started: new_optional_closure(None),
-            on_stopped: new_optional_closure(None),
-            observer: new_optional_closure(None),
-            job: None,
-        }
-    }
-
     fn start(&mut self) -> () {
         let socket = self.socket.try_clone().unwrap();
         let socket_addr = socket.local_addr().unwrap();
-        let shared_observer = get_optional_shared(&self.observer);
-        let shared_started = get_optional_shared(&self.on_started);
-        let shared_stopped = get_optional_shared(&self.on_stopped);
-        let mut buf = [0; 1024];
+        let shared_observer = self.on_received.shared();
+        let shared_started = self.on_started.shared();
+        let shared_stopped = self.on_stopped.shared();
+        let mut buf = [0; 2048];
         // Démarrage du thread pour la réception des données
         let job = thread::spawn(move || {
             if let Some(ref mut on_started) = *shared_started.lock().unwrap().borrow_mut() {
@@ -98,11 +116,16 @@ impl Server<Udp> for Udp {
 
     fn close(&self) -> () {
         let address = self.socket.local_addr().unwrap();
-        self.send(END, &address);
+        self.send(StopMessage {}, &address);
     }
 
-    fn send(&self, msg: &[u8], addr: &SocketAddr) -> () {
-        self.socket.send_to(msg, addr).unwrap();
+    fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message {
+        let content = msg.content();
+        let data = content.as_slice();
+        if data.len() > 2048 {
+            panic!("Error : the message is too large !")
+        }
+        self.socket.send_to(data, addr).unwrap();
     }
 }
 
@@ -121,15 +144,42 @@ impl ServerStatus for Udp {
 }
 
 impl Udp {
-    pub fn set_observer<F>(&mut self, observer: F) where F: FnMut(&Event, &UdpSocket) + Send + Sync + 'static {
-        set_optional_closure(&self.observer, Box::new(observer));
+    pub(crate) fn new(port: u16) -> Udp {
+        let addr = "127.0.0.1".parse::<IpAddr>()
+            .expect("Error on IP");
+        let socket_addr = SocketAddr::new(addr, port);
+        let socket = UdpSocket::bind(socket_addr).unwrap();
+        socket.set_nonblocking(true).unwrap();
+        Udp {
+            socket,
+            on_started: OptionalClosure::new(None),
+            on_stopped: OptionalClosure::new(None),
+            on_received: OptionalClosure::new(None),
+            job: None,
+        }
+    }
+
+    pub fn set_on_received<F>(&mut self, observer: F) where F: FnMut(&Event, &UdpSocket) + Send + Sync + 'static {
+        OptionalClosure::set(&self.on_received, Box::new(observer));
     }
 
     pub fn set_on_started<F>(&mut self, on_started: F) where F: FnMut(&SocketAddr) + Send + Sync + 'static {
-        set_optional_closure(&self.on_started, Box::new(on_started));
+        OptionalClosure::set(&self.on_started, Box::new(on_started));
     }
 
     pub fn set_on_stopped<F>(&mut self, on_stopped: F) where F: FnMut(&SocketAddr) + Send + Sync + 'static {
-        set_optional_closure(&self.on_stopped, Box::new(on_stopped));
+        OptionalClosure::set(&self.on_stopped, Box::new(on_stopped));
+    }
+}
+
+impl Debug for Event {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.content)
+    }
+}
+
+impl Debug for Udp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.socket.local_addr().unwrap())
     }
 }

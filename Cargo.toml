@@ -7,9 +7,16 @@ edition = "2021"
 [lib]
 name = "rudp2plib"
 path = "src/lib.rs"
+doc = true
 
 [[test]]
-name = "rudp2ptest"
-path = "src/tests.rs"
+name = "server"
+harness = false
+
+[[test]]
+name = "peer"
+harness = false
 
 [dependencies]
+cucumber = "0.19"
+futures = "0.3.27"
