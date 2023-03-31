@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::net::{SocketAddr, UdpSocket};
@@ -11,7 +10,7 @@ use openssl::rsa::Rsa;
 use event::PeerEvent;
 use message::PeerMessage;
 
-use crate::peer::event::{AsBytes, CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, MESSAGE, PeerConnecting};
+use crate::peer::event::{AsBytes, CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, MESSAGE, PeerConnectedEvent, PeerConnectingEvent};
 use crate::server::{Event, Message, Server, ServerStatus, Udp};
 use crate::utils::{OptionalClosure, ThreadSafe};
 
@@ -51,12 +50,12 @@ pub trait Exchange {
     /// Send a message to a specific peer.
     fn send_to(&self, message: PeerMessage, uid: &String) -> ();
     /// Connect with an other server.
-    fn connect(&mut self, addr: &SocketAddr, white_list: Vec<String>) -> ();
+    fn connect(&mut self, addr: &SocketAddr) -> ();
 }
 
 // STRUCT
 
-struct RemotePeer {
+pub struct RemotePeer {
     /// Uid.
     uid: String,
     /// Address of the peer.
@@ -72,8 +71,6 @@ pub struct Peer {
     pub uid: String,
     /// UDP Server used by the peer to communicate.
     server: Udp,
-    /// Address of the dispatch (optional).
-    dispatcher_addr: RefCell<Option<SocketAddr>>,
     /// List of the other peers.
     peers: ThreadSafe<HashMap<String, RemotePeer>>,
     /// Listener trigger when a message is received.
@@ -98,6 +95,17 @@ impl RemotePeer {
     }
 }
 
+impl Clone for RemotePeer {
+    fn clone(&self) -> Self {
+        RemotePeer {
+            uid: self.uid.clone(),
+            addr: self.addr.clone(),
+            public_key: None,
+            rsa: None,
+        }
+    }
+}
+
 impl Dispatch for Peer {
     fn routing(&mut self) {
         let peer_uid = self.uid.clone();
@@ -108,44 +116,56 @@ impl Dispatch for Peer {
         let shared_disconnected = self.on_peer_disconnected.shared();
         self.server.set_on_received(Box::new(move |e: &Event, socket: &UdpSocket| {
             let peer_event = PeerEvent::convert_to_peer_event(e.content.clone());
-            let uid = PeerEvent::read_uid(&peer_event.message);
-            let content = PeerEvent::read_after_uid(&peer_event.message);
             let mut peers = shared_peers.lock().unwrap();
             let guard_message = shared_message.lock().unwrap();
             let guard_connected = shared_connected.lock().unwrap();
             let guard_disconnected = shared_disconnected.lock().unwrap();
             if peer_event.code == CONNECTING {
-                let white_list = PeerConnecting::read_white_list(&content);
-                if !RemotePeer::exists(&peers, &uid) {
-                    insert_peer(&mut peers, &uid, e.sender);
-                    send_message_to_peers(socket, PeerEvent::connected(uid.clone(), e.sender), &peers.values().collect(), white_list);
+                let peer_connecting = PeerEvent::read_peer_connecting(&peer_event.message);
+                if !RemotePeer::exists(&peers, &peer_connecting.uid) {
+                    insert_peer(&mut peers, &peer_connecting.uid, e.sender);
+                    // Response CONNECTED
+                    let my_peers = peers.values().cloned().collect();
+                    socket.send_to(PeerEvent::connected(PeerConnectedEvent {
+                        uid: peer_uid.clone(),
+                        addr,
+                        peers: my_peers,
+                    }).content().as_slice(), e.sender).unwrap();
                 }
             }
             if peer_event.code == DISCONNECTING {
-                peers.remove(&uid);
-                send_message_to_peers(socket, PeerEvent::disconnected(uid.clone(), e.sender), &peers.values().collect(), Vec::new());
+                let peer_disconnecting = PeerEvent::read_peer_connecting(&peer_event.message);
+                peers.remove(&peer_disconnecting.uid);
+                socket.send_to(PeerEvent::disconnected(peer_uid.clone(), addr).content().as_slice(), e.sender).unwrap();
             }
             if peer_event.code == CONNECTED {
-                let address = PeerConnecting::read_address(&content);
-                if !RemotePeer::exists(&peers, &uid) {
-                    insert_peer(&mut peers, &uid, address);
+                let peer_connected = PeerEvent::read_peer_connected(&peer_event.message);
+                if !RemotePeer::exists(&peers, &peer_connected.uid) {
+                    insert_peer(&mut peers, &peer_connected.uid, peer_connected.addr);
                     if let Some(ref mut connected) = *guard_connected.borrow_mut() {
-                        connected(&uid);
+                        connected(&peer_connected.uid);
                     }
-                    if uid.ne(&peer_uid) {
-                        socket.send_to(PeerEvent::connected(peer_uid.clone(), addr).as_bytes().as_slice(), address).unwrap();
+                    for other in peer_connected.peers {
+                        if !RemotePeer::exists(&peers, &other.uid) {
+                            // New peer
+                            socket.send_to(PeerEvent::connecting(PeerConnectingEvent {
+                                uid: peer_uid.clone(),
+                            }).content().as_slice(), other.addr).unwrap();
+                        }
                     }
                 }
             }
             if peer_event.code == DISCONNECTED {
-                peers.remove(&uid);
+                let peer_disconnected = PeerEvent::read_peer_connecting(&peer_event.message);
+                peers.remove(&peer_disconnected.uid);
                 if let Some(ref mut disconnected) = *guard_disconnected.borrow_mut() {
-                    disconnected(&uid);
+                    disconnected(&peer_disconnected.uid);
                 }
             }
             if peer_event.code == MESSAGE {
                 if let Some(ref mut observer) = *guard_message.borrow_mut() {
-                    observer(&PeerMessage::parse(&content), &uid);
+                    let peer_message = PeerEvent::read_peer_message(&peer_event.message);
+                    observer(&PeerMessage::parse(&peer_message.content), &peer_message.uid);
                 } else {
                     println!("No observer for {}", addr);
                 }
@@ -163,9 +183,10 @@ impl Server<Peer> for Peer {
     }
 
     fn close(&self) -> () {
-        let addr = self.dispatcher_addr.borrow_mut();
-        if addr.is_some() {
-            self.send(PeerEvent::disconnecting(self.uid.clone()), &addr.unwrap());
+        let shared_peers = self.peers.clone();
+        let peers = shared_peers.lock().unwrap();
+        for peer in peers.values() {
+            self.send(PeerEvent::disconnecting(self.uid.clone()), &peer.addr);
         }
         self.server.close();
     }
@@ -191,12 +212,10 @@ impl Exchange for Peer {
         self.send_to_remote_peer(message, remote_peer);
     }
 
-    fn connect(&mut self, addr: &SocketAddr, white_list: Vec<String>) -> () {
+    fn connect(&mut self, addr: &SocketAddr) -> () {
         self.start();
-        self.dispatcher_addr = RefCell::new(Some(addr.clone()));
-        self.server.send(PeerEvent::connecting(PeerConnecting {
+        self.server.send(PeerEvent::connecting(PeerConnectingEvent {
             uid: self.uid.clone(),
-            white_list,
         }), addr);
     }
 }
@@ -217,7 +236,6 @@ impl Peer {
         Peer {
             uid,
             server: Udp::new(port),
-            dispatcher_addr: RefCell::new(None),
             peers: ThreadSafe::new(HashMap::new()),
             on_message_received: OptionalClosure::new(None),
             on_peer_connected: OptionalClosure::new(None),

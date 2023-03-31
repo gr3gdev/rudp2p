@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+
+use crate::peer::RemotePeer;
 use crate::server::Message;
 
 // CONSTANTS
@@ -11,17 +13,11 @@ pub static DISCONNECTED: u8 = 9;
 
 // COMMON FUNCTIONS
 
-fn init_with_data(uid: String, list: Vec<u8>) -> Vec<u8> {
-    let mut data = Vec::new();
-    let uid_size = uid.len() as u8;
-    data.push(uid_size);
-    for b in uid.as_bytes().to_vec() {
-        data.push(b);
-    }
+fn init_with_data(uid: String, mut list: Vec<u8>) -> Vec<u8> {
+    let mut data = vec!(uid.len() as u8);
+    data.append(&mut uid.as_bytes().to_vec());
     if !list.is_empty() {
-        for b in list {
-            data.push(b);
-        }
+        data.append(&mut list);
     }
     data
 }
@@ -42,11 +38,25 @@ pub struct PeerEvent {
     pub message: Vec<u8>,
 }
 
-pub struct PeerConnecting {
+pub struct PeerConnectingEvent {
     /// Uid of the peer that connects.
     pub uid: String,
-    /// Whitelist of Uid with whom peer can communicate.
-    pub white_list: Vec<String>,
+}
+
+pub struct PeerConnectedEvent {
+    /// Uid of the peer connected.
+    pub uid: String,
+    /// Address of the peer connected.
+    pub addr: SocketAddr,
+    /// List of peers with which you can connect.
+    pub peers: Vec<RemotePeer>,
+}
+
+pub struct PeerMessageEvent {
+    /// Uid of the peer connected.
+    pub uid: String,
+    /// Content of the message.
+    pub content: Vec<u8>,
 }
 
 // IMPL
@@ -62,7 +72,7 @@ impl AsBytes for PeerEvent {
     }
 }
 
-impl PeerConnecting {
+impl PeerEvent {
     pub fn read_address(message: &Vec<u8>) -> SocketAddr {
         let msg_address = String::from_utf8(message.clone()).unwrap();
         let address: SocketAddr = msg_address.parse().expect("Unable to parse socket address");
@@ -80,23 +90,22 @@ impl PeerConnecting {
         }
         list
     }
-}
 
-impl PeerEvent {
     /// Event: connecting.
-    pub fn connecting(peer_connecting: PeerConnecting) -> PeerEvent {
-        let mut data = init_with_data(peer_connecting.uid, Vec::new());
-        for w in peer_connecting.white_list {
-            for b in w.as_bytes().to_vec() {
-                data.push(b);
-            }
-            for e in ",".as_bytes() {
-                data.push(e.clone());
-            }
-        }
+    pub fn connecting(peer_connecting: PeerConnectingEvent) -> PeerEvent {
+        let data = init_with_data(peer_connecting.uid, Vec::new());
         PeerEvent {
             code: CONNECTING,
             message: data.clone(),
+        }
+    }
+
+    pub fn read_peer_connecting(content: &Vec<u8>) -> PeerConnectingEvent {
+        let uid_size = content[0] as usize;
+        let uid = content[1..(1 + uid_size)].to_vec();
+        let uid = String::from_utf8(uid).unwrap();
+        PeerConnectingEvent {
+            uid
         }
     }
 
@@ -127,10 +136,49 @@ impl PeerEvent {
     }
 
     /// Event: connected.
-    pub fn connected(uid: String, addr: SocketAddr) -> PeerEvent {
+    pub fn connected(peer_connected_event: PeerConnectedEvent) -> PeerEvent {
+        let uid = peer_connected_event.uid;
+        let addr = peer_connected_event.addr;
+        let peers = peer_connected_event.peers;
+        let mut addr_list = addr.to_string().as_bytes().to_vec();
+        let mut list = vec!(addr_list.len() as u8);
+        list.append(&mut addr_list);
+        for peer in peers {
+            let peer_string = peer.uid + "|" + peer.addr.to_string().as_str();
+            list.append(&mut peer_string.as_bytes().to_vec());
+            list.append(&mut ",".as_bytes().to_vec());
+        }
         PeerEvent {
             code: CONNECTED,
-            message: init_with_data(uid, addr.to_string().as_bytes().to_vec()),
+            message: init_with_data(uid, list),
+        }
+    }
+
+    pub fn read_peer_connected(content: &Vec<u8>) -> PeerConnectedEvent {
+        let uid_size = content[0] as usize;
+        let uid = content[1..(1 + uid_size)].to_vec();
+        let uid = String::from_utf8(uid).unwrap();
+        let address_size = content[(1 + uid_size)] as usize;
+        let address = &content[(2 + uid_size)..(2 + uid_size + address_size)];
+        let address = String::from_utf8(address.to_vec()).unwrap();
+        let address: SocketAddr = address.parse().expect("Unable to parse socket address");
+        let peers = &content[(2 + uid_size + address_size)..content.len()];
+        let list_peers = String::from_utf8(peers.to_vec()).unwrap();
+        let peers_data = list_peers.split(",").collect::<Vec<&str>>();
+        let mut peers = Vec::new();
+        for peer in peers_data {
+            let data = peer.split("|").collect::<Vec<&str>>();
+            peers.push(RemotePeer {
+                uid: data.get(0).unwrap().to_string(),
+                addr: data.get(1).unwrap().to_string().parse().expect("Unable to parse socket address"),
+                public_key: None,
+                rsa: None,
+            })
+        }
+        PeerConnectedEvent {
+            uid,
+            addr: address,
+            peers,
         }
     }
 
@@ -149,6 +197,17 @@ impl PeerEvent {
             message: init_with_data(uid, message),
         }
     }
+
+    pub fn read_peer_message(content: &Vec<u8>) -> PeerMessageEvent {
+        let uid_size = content[0] as usize;
+        let uid = content[1..(1 + uid_size)].to_vec();
+        let uid = String::from_utf8(uid).unwrap();
+        PeerMessageEvent {
+            uid,
+            content: content[(1 + uid_size)..content.len()].to_vec().clone()
+        }
+    }
+
 }
 
 impl Message for PeerEvent {

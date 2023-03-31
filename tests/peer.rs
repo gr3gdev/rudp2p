@@ -62,7 +62,7 @@ impl PeerData {
         });
         if let Some(dispatcher) = connect {
             println!("Connect {} with {}", peer.uid, dispatcher);
-            peer.connect(&dispatcher, authorized_peers);
+            peer.connect(&dispatcher);
         } else {
             println!("Start {}", peer.uid);
             peer.start();
