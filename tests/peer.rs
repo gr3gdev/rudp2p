@@ -95,11 +95,10 @@ impl PeerData {
         self.peer.send_to_all(message);
     }
 
-    fn send_to(&self, data: String, other: &PeerData) {
+    fn send_to(&self, data: String, other: &String) {
         let message = Self::get_message(&data);
-        let addr = other.addr;
-        println!("{} sends [{}] to {}", self.addr, data, addr);
-        self.peer.send_to(message, &addr);
+        println!("{} sends [{}] to {}", self.addr, data, other);
+        self.peer.send_to(message, &other);
     }
 
     fn is_connected_with(&self, uid: &String) {
@@ -257,8 +256,7 @@ async fn peer_sends_to_all(w: &mut PeersWorld, peer_name: String, data: String) 
 #[when(expr = "the peer {string} sends {string} to {string}")]
 async fn peer_sends_to_peer(w: &mut PeersWorld, peer_name: String, data: String, other_peer: String) {
     let peer_data = w.find(&peer_name);
-    let other_peer_data = w.servers.iter().find(|p| p.peer.uid == other_peer).expect("Peer not found");
-    peer_data.send_to(data, other_peer_data);
+    peer_data.send_to(data, &other_peer);
 }
 
 #[then(expr = "the peer {string} does not receives")]

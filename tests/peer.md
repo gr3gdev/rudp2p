@@ -5,7 +5,7 @@
 flowchart LR
   classDef peer stroke:#0f0;
   
-  P1[fa:fa-laptop Peer1]:::peer --Connecting--> B((fa:fa-server Dispatcher))
+  P1[fa:fa-laptop Peer1]:::peer --Connecting--> B((fa:fa-server Peer0))
   
   B --Peer1 Connected--> P1
 ```
@@ -15,7 +15,7 @@ flowchart LR
 flowchart LR
   classDef peer stroke:#0f0;
   
-  P2[fa:fa-laptop Peer2]:::peer --Connecting--> B((fa:fa-server Dispatcher))
+  P2[fa:fa-laptop Peer2]:::peer --Connecting--> B((fa:fa-server Peer0))
   
   B --Peer2 Connected--> P1[fa:fa-laptop Peer1]:::peer
   B --Peer2 Connected--> P2
@@ -27,7 +27,7 @@ flowchart LR
 flowchart LR
   classDef peer stroke:#0f0;
   
-  P3[fa:fa-laptop Peer3]:::peer --Connecting--> B((fa:fa-server Dispatcher))
+  P3[fa:fa-laptop Peer3]:::peer --Connecting--> B((fa:fa-server Peer0))
   
   B --Peer3 Connected--> P1[fa:fa-laptop Peer1]:::peer
   B --Peer3 Connected--> P2[fa:fa-laptop Peer2]:::peer
@@ -41,13 +41,13 @@ flowchart LR
 flowchart LR
   classDef peer stroke:#0f0;
   
-  P3[fa:fa-laptop Peer3]:::peer --Disconnecting--> B((fa:fa-server Dispatcher))
+  P3[fa:fa-laptop Peer3]:::peer --Disconnecting--> B((fa:fa-server Peer0))
   
   B --Peer3 Disconnected--> P1[fa:fa-laptop Peer1]:::peer
   B --Peer3 Disconnected--> P2[fa:fa-laptop Peer2]:::peer
 ```
 
-```gherkin:features/peer/dispatcher.feature
+```gherkin:features/peer/Peer0.feature
 
 ```
 
