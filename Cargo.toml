@@ -3,7 +3,6 @@ name = "rudp2p"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "rudp2plib"
 path = "src/lib.rs"
@@ -21,4 +20,4 @@ harness = false
 openssl-sys = "0.9"
 openssl = "0.10"
 cucumber = "0.19"
-futures = "0.3.27"
+futures = "0.3"
