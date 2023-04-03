@@ -10,7 +10,7 @@ use openssl::rsa::Rsa;
 use event::PeerEvent;
 use message::PeerMessage;
 
-use crate::peer::event::{AsBytes, CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, MESSAGE, Parser, PeerConnectedEvent, PeerConnectingEvent, PeerMessageEvent};
+use crate::peer::event::{CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, MESSAGE, Parser, PeerConnectedEvent, PeerConnectingEvent, PeerIdentEvent, PeerMessageEvent, Split};
 use crate::server::{Event, Message, Server, ServerStatus, Udp};
 use crate::utils::{OptionalClosure, ThreadSafe};
 
@@ -19,21 +19,11 @@ pub mod message;
 
 // COMMON FUNCTIONS
 
-fn send_message_to_peers(socket: &UdpSocket, peer_event: PeerEvent, peers: &Vec<&RemotePeer>, white_list: Vec<String>) {
-    println!("send_message_to_peers {} {:?} {:?}", socket.local_addr().unwrap(), peers, white_list);
-    for peer in peers {
-        if white_list.is_empty() || white_list.contains(&peer.uid) {
-            socket.send_to(peer_event.as_bytes().as_slice(), peer.addr).unwrap();
-        }
-    }
-}
-
-fn insert_peer(peers: &mut MutexGuard<HashMap<String, RemotePeer>>, uid: &String, address: SocketAddr) {
+fn insert_peer(peers: &mut MutexGuard<HashMap<String, RemotePeer>>, uid: &String, address: SocketAddr, public_key_pem: &Vec<u8>) {
     peers.insert(uid.clone(), RemotePeer {
         uid: uid.clone(),
         addr: address,
-        public_key: None,
-        rsa: None,
+        public_key: Some(Rsa::public_key_from_pem(public_key_pem).expect("Unable to generate public key from pem")),
     });
 }
 
@@ -62,8 +52,6 @@ pub struct RemotePeer {
     addr: SocketAddr,
     /// RSA public key for encrypt data.
     public_key: Option<Rsa<Public>>,
-    /// RSA private key for decrypt remote message and public key for remote encryption.
-    rsa: Option<Rsa<Private>>,
 }
 
 pub struct Peer {
@@ -79,6 +67,8 @@ pub struct Peer {
     on_peer_connected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
     /// Listener trigger when a peer is disconnected.
     on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
+    /// Keys for encryption.
+    keys: Rsa<Private>,
 }
 
 // IMPL
@@ -101,7 +91,6 @@ impl Clone for RemotePeer {
             uid: self.uid.clone(),
             addr: self.addr.clone(),
             public_key: None,
-            rsa: None,
         }
     }
 }
@@ -110,26 +99,27 @@ impl Dispatch for Peer {
     fn routing(&mut self) {
         let peer_uid = self.uid.clone();
         let addr = self.addr().clone();
+        let keys = self.keys.clone();
         let shared_peers = self.peers.clone();
         let shared_message = self.on_message_received.shared();
         let shared_connected = self.on_peer_connected.shared();
         let shared_disconnected = self.on_peer_disconnected.shared();
         self.server.set_on_received(Box::new(move |e: &Event, socket: &UdpSocket| {
-            let peer_event = PeerEvent::convert_to_peer_event(e.content.clone());
+            let peer_event = PeerEvent::parse(&e.content);
             let mut peers = shared_peers.lock().unwrap();
             if peer_event.code == CONNECTING {
                 let peer_connecting = PeerConnectingEvent::parse(&peer_event.message);
-                Self::connecting(&peer_uid, addr, e.sender, socket, &mut peers, peer_connecting)
+                Self::connecting(&peer_uid, addr, &keys, e.sender, socket, &mut peers, peer_connecting);
             }
             if peer_event.code == DISCONNECTING {
-                let peer_disconnecting = PeerConnectingEvent::parse(&peer_event.message);
+                let peer_disconnecting = PeerIdentEvent::parse(&peer_event.message);
                 Self::disconnecting(&peer_uid, addr, e.sender, socket, &mut peers, peer_disconnecting);
             }
             if peer_event.code == CONNECTED {
                 let guard_connected = shared_connected.lock().unwrap();
                 let peer_connected = PeerConnectedEvent::parse(&peer_event.message);
                 if !RemotePeer::exists(&peers, &peer_connected.uid) {
-                    Self::connected(&peer_uid, socket, &mut peers, &peer_connected);
+                    Self::connected(&peer_uid, addr, &keys, socket, &mut peers, &peer_connected);
                     if let Some(ref mut connected) = *guard_connected.borrow_mut() {
                         connected(&peer_connected.uid);
                     }
@@ -137,7 +127,7 @@ impl Dispatch for Peer {
             }
             if peer_event.code == DISCONNECTED {
                 let guard_disconnected = shared_disconnected.lock().unwrap();
-                let peer_disconnected = PeerConnectingEvent::parse(&peer_event.message);
+                let peer_disconnected = PeerIdentEvent::parse(&peer_event.message);
                 Self::disconnected(peers, &peer_disconnected);
                 if let Some(ref mut disconnected) = *guard_disconnected.borrow_mut() {
                     disconnected(&peer_disconnected.uid);
@@ -198,6 +188,7 @@ impl Exchange for Peer {
         self.start();
         self.server.send(PeerEvent::connecting(PeerConnectingEvent {
             uid: self.uid.clone(),
+            public_key_pem: self.keys.public_key_to_pem().expect("Unable to get pem from public key"),
         }), addr);
     }
 }
@@ -222,6 +213,7 @@ impl Peer {
             on_message_received: OptionalClosure::new(None),
             on_peer_connected: OptionalClosure::new(None),
             on_peer_disconnected: OptionalClosure::new(None),
+            keys: Rsa::generate(1024).expect("Unable to generate keys"),
         }
     }
 
@@ -239,50 +231,53 @@ impl Peer {
 
     fn send_to_remote_peer(&self, message: PeerMessage, remote_peer: &RemotePeer) {
         let addr = remote_peer.addr;
-        for msg in PeerMessage::split(message, 1024) {
-            if addr != self.addr() {
-                self.server.send(msg.to_event(&self.uid), &addr)
+        if addr != self.addr() {
+            for event in PeerEvent::split(message.to_event(&self.uid), 1024) {
+                self.server.send(event, &addr)
             }
         }
     }
 
-    fn connecting(peer_uid: &String, addr: SocketAddr, sender: SocketAddr, socket: &UdpSocket,
+    fn connecting(peer_uid: &String, addr: SocketAddr, keys: &Rsa<Private>, sender: SocketAddr, socket: &UdpSocket,
                   mut peers: &mut MutexGuard<HashMap<String, RemotePeer>>,
                   peer_connecting: PeerConnectingEvent) {
+        println!("connecting : {} with {}", peer_uid, peer_connecting.uid);
         if !RemotePeer::exists(&peers, &peer_connecting.uid) {
-            insert_peer(&mut peers, &peer_connecting.uid, sender);
+            insert_peer(&mut peers, &peer_connecting.uid, sender, &peer_connecting.public_key_pem);
+            let public_pem = keys.public_key_to_pem().unwrap();
             // Response CONNECTED
             let my_peers = peers.values().cloned().collect();
+            println!("{} send connected to {} - {}", peer_uid, peer_connecting.uid, sender);
             socket.send_to(PeerEvent::connected(PeerConnectedEvent {
                 uid: peer_uid.clone(),
                 addr,
                 peers: my_peers,
+                public_key_pem: public_pem,
             }).content().as_slice(), &sender).unwrap();
         }
     }
 
     fn disconnecting(peer_uid: &String, addr: SocketAddr, sender: SocketAddr, socket: &UdpSocket,
                      peers: &mut MutexGuard<HashMap<String, RemotePeer>>,
-                     peer_disconnecting: PeerConnectingEvent) {
+                     peer_disconnecting: PeerIdentEvent) {
         peers.remove(&peer_disconnecting.uid);
         socket.send_to(PeerEvent::disconnected(peer_uid.clone(), addr).content().as_slice(), sender).unwrap();
     }
 
-    fn connected(peer_uid: &String, socket: &UdpSocket,
+    fn connected(peer_uid: &String, addr: SocketAddr, keys: &Rsa<Private>, socket: &UdpSocket,
                  mut peers: &mut MutexGuard<HashMap<String, RemotePeer>>,
                  peer_connected: &PeerConnectedEvent) {
-        insert_peer(&mut peers, &peer_connected.uid, peer_connected.addr);
+        println!("connected : {} with {}", peer_uid, peer_connected.uid);
+        insert_peer(&mut peers, &peer_connected.uid, peer_connected.addr, &peer_connected.public_key_pem);
         for other in &peer_connected.peers {
-            if !RemotePeer::exists(&peers, &other.uid) {
-                // New peer
-                socket.send_to(PeerEvent::connecting(PeerConnectingEvent {
-                    uid: peer_uid.clone(),
-                }).content().as_slice(), other.addr).unwrap();
-            }
+            Self::connecting(&peer_uid, addr, &keys, other.addr, socket, &mut peers, PeerConnectingEvent {
+                uid: other.uid.clone(),
+                public_key_pem: keys.public_key_to_pem().expect("Unable to generate pem from public key"),
+            });
         }
     }
 
-    fn disconnected(mut peers: MutexGuard<HashMap<String, RemotePeer>>, peer_disconnected: &PeerConnectingEvent) {
+    fn disconnected(mut peers: MutexGuard<HashMap<String, RemotePeer>>, peer_disconnected: &PeerIdentEvent) {
         peers.remove(&peer_disconnected.uid);
     }
 }

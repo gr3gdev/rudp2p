@@ -52,61 +52,14 @@ impl PeerMessage {
         }
     }
 
-    pub fn concat(messages: &Vec<PeerMessage>) -> PeerMessage {
-        let mut uid = Vec::new();
-        let mut content = Vec::new();
-        for message in messages {
-            uid = message.uid.clone();
-            if content.len() < message.total {
-                for c in message.content.clone() {
-                    content.push(c);
-                }
-            }
-        }
-        PeerMessage {
-            uid,
-            start: 0,
-            total: content.len(),
-            content,
-        }
-    }
-
-    pub fn split(message: PeerMessage, size: usize) -> Vec<PeerMessage> {
-        let mut messages = Vec::new();
-        let total = message.content.len();
-        for i1 in (0..message.content.len()).step_by(size) {
-            let mut new_content = Vec::new();
-            for i2 in i1..(i1 + size) {
-                if let Some(data) = message.content.get(i2) {
-                    new_content.push(*data);
-                }
-            }
-            messages.push(PeerMessage {
-                uid: message.uid.clone(),
-                start: i1,
-                total,
-                content: new_content,
-            })
-        }
-        messages
-    }
-
     pub fn to_event(&self, uid: &String) -> PeerEvent {
         let mut data: Vec<u8> = Vec::new();
         let size = self.uid.len() as u8;
         data.push(size);
-        for ne in self.start.to_ne_bytes() {
-            data.push(ne);
-        }
-        for ne in self.total.to_ne_bytes() {
-            data.push(ne);
-        }
-        for d in self.uid.clone() {
-            data.push(d);
-        }
-        for c in self.content.clone() {
-            data.push(c);
-        }
+        data.append(&mut self.start.to_ne_bytes().to_vec());
+        data.append(&mut self.total.to_ne_bytes().to_vec());
+        data.append(&mut self.uid.to_vec());
+        data.append(&mut self.content.clone());
         PeerEvent::message(uid.clone(), data)
     }
 

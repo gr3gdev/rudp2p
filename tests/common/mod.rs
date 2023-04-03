@@ -8,7 +8,7 @@ pub fn wait_while_condition(message: &str, condition: &dyn Fn() -> bool) {
         .unwrap().as_millis();
     while condition() {
         println!("Waiting {}...", message);
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(1000));
         let current = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap().as_millis();
