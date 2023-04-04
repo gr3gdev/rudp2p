@@ -77,6 +77,25 @@ impl PeerMessage {
         }
     }
 
+    pub fn concat(messages: &Vec<PeerMessage>) -> PeerMessage {
+        let mut uid = Vec::new();
+        let mut content = Vec::new();
+        for message in messages {
+            uid = message.uid.clone();
+            if content.len() < message.total {
+                for c in message.content.clone() {
+                    content.push(c);
+                }
+            }
+        }
+        PeerMessage {
+            uid,
+            start: 0,
+            total: content.len(),
+            content,
+        }
+    }
+
     pub fn uid(message: &PeerMessage) -> String {
         String::from_utf8(message.uid.clone()).unwrap()
     }

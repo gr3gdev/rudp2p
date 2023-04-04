@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use std::time::SystemTime;
 
+use openssl::rsa::{Padding, Rsa};
+
 use crate::peer::RemotePeer;
 use crate::server::Message;
 
@@ -13,6 +15,20 @@ pub static MESSAGE: u8 = 3;
 pub static DISCONNECTED: u8 = 9;
 
 // COMMON FUNCTIONS
+
+fn encrypt(public_key_pem: &Vec<u8>, data: Vec<u8>) -> Vec<u8> {
+    let rsa = Rsa::public_key_from_pem(public_key_pem.as_slice()).unwrap();
+    let mut buf = vec![0; rsa.size() as usize];
+    rsa.public_encrypt(data.as_slice(), &mut buf, Padding::PKCS1).unwrap();
+    buf
+}
+
+fn decrypt(private_key_pem: &Vec<u8>, passphrase: &str, data: Vec<u8>) -> Vec<u8> {
+    let rsa = Rsa::private_key_from_pem_passphrase(private_key_pem.as_slice(), passphrase.as_bytes()).unwrap();
+    let mut buf = vec![0; rsa.size() as usize];
+    rsa.private_decrypt(&data, &mut buf, Padding::PKCS1).unwrap();
+    buf
+}
 
 fn append_uid(data: &mut Vec<u8>, uid: String) {
     data.push(uid.len() as u8);
@@ -45,33 +61,41 @@ fn append_message(data: &mut Vec<u8>, mut message: Vec<u8>) {
     data.append(&mut message);
 }
 
-fn append_address(data: &mut Vec<u8>, addr: SocketAddr) {
+fn append_address(data: &mut Vec<u8>, addr: SocketAddr, public_key_pem: &Vec<u8>) {
     let address = addr.to_string();
     data.push(address.len() as u8);
-    data.append(&mut address.as_bytes().to_vec());
+    let mut encrypt_address = encrypt(public_key_pem, address.as_bytes().to_vec());
+    data.append(&mut encrypt_address);
 }
 
-fn parse_address(message: &Vec<u8>, start: usize) -> Data<SocketAddr> {
+fn parse_address(message: &Vec<u8>, start: usize, private_key_pem: &Vec<u8>, passphrase: &str) -> Data<SocketAddr> {
     let address_size = message[start] as usize;
     let address = &message[(1 + start)..(1 + start + address_size)];
-    let address = String::from_utf8(address.to_vec()).unwrap();
+    let encrypt_address = address.to_vec();
+    let address = decrypt(private_key_pem, passphrase, encrypt_address);
+    let address = String::from_utf8(address).unwrap();
     Data {
         value: address.parse().expect("Unable to parse socket address"),
         size: address_size,
     }
 }
 
-fn append_peers(data: &mut Vec<u8>, peers: Vec<RemotePeer>) {
+fn append_peers(data: &mut Vec<u8>, peers: Vec<RemotePeer>, public_key_pem: &Vec<u8>) {
+    let mut list = Vec::new();
     for peer in peers {
         let peer_string = peer.uid + "|" + peer.addr.to_string().as_str();
-        data.append(&mut peer_string.as_bytes().to_vec());
-        data.append(&mut ",".as_bytes().to_vec());
+        list.append(&mut peer_string.as_bytes().to_vec());
+        list.append(&mut ",".as_bytes().to_vec());
     }
+    let mut encrypt_peers = encrypt(public_key_pem, list);
+    data.append(&mut encrypt_peers);
 }
 
-fn parse_peers(message: &Vec<u8>, start: usize) -> Data<Vec<RemotePeer>> {
+fn parse_peers(message: &Vec<u8>, start: usize, private_key_pem: &Vec<u8>, passphrase: &str) -> Data<Vec<RemotePeer>> {
     let peers = &message[start..message.len()];
-    let list_peers = String::from_utf8(peers.to_vec()).unwrap();
+    let encrypt_peers = peers.to_vec();
+    let peers = decrypt(private_key_pem, passphrase, encrypt_peers);
+    let list_peers = String::from_utf8(peers).unwrap();
     let peers_data = list_peers.split(",").collect::<Vec<&str>>();
     let mut peers = Vec::new();
     for peer in peers_data {
@@ -95,14 +119,21 @@ pub trait Parser<O> {
     fn parse(message: &Vec<u8>) -> O;
 }
 
+pub trait DecryptParser<O> {
+    /// Parse message to object.
+    fn parse(message: &Vec<u8>, private_key_pem: &Vec<u8>, passphrase: &str) -> O;
+}
+
 pub trait Split<T> {
     /// Split an objet in list.
     fn split(data: T, size: usize) -> Vec<T>;
 }
 
-trait Merge<T> {
+pub trait Merge<T> {
     /// Merge a list in an object.
-    fn merge(data: Vec<T>) -> T;
+    fn merge(data: &Vec<T>) -> T;
+    /// Check if data is complete (len == total).
+    fn is_complete(&self) -> bool;
 }
 
 // STRUCT
@@ -114,7 +145,7 @@ struct Data<T> {
 
 pub struct PeerEvent {
     /// Unique ID.
-    uid: String,
+    pub(crate) uid: String,
     /// Start of the byte array of the content message.
     start: usize,
     /// Size of the byte array of the content message.
@@ -177,12 +208,12 @@ impl Parser<PeerConnectingEvent> for PeerConnectingEvent {
     }
 }
 
-impl Parser<PeerConnectedEvent> for PeerConnectedEvent {
-    fn parse(message: &Vec<u8>) -> PeerConnectedEvent {
+impl DecryptParser<PeerConnectedEvent> for PeerConnectedEvent {
+    fn parse(message: &Vec<u8>, private_key_pem: &Vec<u8>, passphrase: &str) -> PeerConnectedEvent {
         let uid_data = parse_uid(message);
         let public_key_data = parse_public_pem(message, 1 + uid_data.size);
-        let address_data = parse_address(message, 1 + uid_data.size + public_key_data.size);
-        let peers_data = parse_peers(message, 1 + uid_data.size + public_key_data.size + address_data.size);
+        let address_data = parse_address(message, 1 + uid_data.size + public_key_data.size, private_key_pem, passphrase);
+        let peers_data = parse_peers(message, 1 + uid_data.size + public_key_data.size + address_data.size, private_key_pem, passphrase);
         PeerConnectedEvent {
             uid: uid_data.value,
             addr: address_data.value,
@@ -220,6 +251,18 @@ impl Parser<PeerEvent> for PeerEvent {
     }
 }
 
+impl Clone for PeerEvent {
+    fn clone(&self) -> Self {
+        PeerEvent {
+            uid: self.uid.clone(),
+            start: self.start.clone(),
+            total: self.total.clone(),
+            code: self.code.clone(),
+            message: self.message.clone(),
+        }
+    }
+}
+
 impl Message for PeerEvent {
     fn content(&self) -> Vec<u8> {
         let mut data = Vec::new();
@@ -235,11 +278,15 @@ impl Message for PeerEvent {
 impl Split<PeerEvent> for PeerEvent {
     fn split(data: PeerEvent, size: usize) -> Vec<PeerEvent> {
         let mut list = Vec::new();
-        for i1 in (0..data.message.len()).step_by(size) {
-            let new_content = data.message[i1..(i1 + size)].to_vec();
+        for i in (0..data.message.len()).step_by(size) {
+            let mut max = i + size;
+            if max > data.message.len() {
+                max = data.message.len();
+            }
+            let new_content = data.message[i..max].to_vec();
             list.push(PeerEvent {
                 uid: data.uid.clone(),
-                start: i1,
+                start: i,
                 total: data.total,
                 code: data.code,
                 message: new_content,
@@ -250,7 +297,7 @@ impl Split<PeerEvent> for PeerEvent {
 }
 
 impl Merge<PeerEvent> for PeerEvent {
-    fn merge(data: Vec<PeerEvent>) -> PeerEvent {
+    fn merge(data: &Vec<PeerEvent>) -> PeerEvent {
         let mut uid = None;
         let mut code = None;
         let mut message = Vec::new();
@@ -259,7 +306,7 @@ impl Merge<PeerEvent> for PeerEvent {
                 uid = Some(event.uid.clone());
                 code = Some(event.code);
             }
-            if uid.is_some() && code.is_some() && uid.eq(&Some(event.uid)) && code.eq(&Some(event.code)) {
+            if uid.is_some() && code.is_some() && uid.eq(&Some(event.uid.clone())) && code.eq(&Some(event.code)) {
                 if message.len() < event.total {
                     for c in event.message.clone() {
                         message.push(c);
@@ -274,6 +321,10 @@ impl Merge<PeerEvent> for PeerEvent {
             code: code.expect("Code not found"),
             message,
         }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.total > 0 && self.message.len() > 0 && self.total == self.message.len()
     }
 }
 
@@ -307,20 +358,20 @@ impl PeerEvent {
     }
 
     /// Event: connected.
-    pub fn connected(peer_connected_event: PeerConnectedEvent) -> PeerEvent {
+    pub fn connected(peer_connected_event: PeerConnectedEvent, public_key_pem: &Vec<u8>) -> PeerEvent {
         let mut list = Vec::new();
         append_uid(&mut list, peer_connected_event.uid);
         append_public_pem(&mut list, peer_connected_event.public_key_pem);
-        append_address(&mut list, peer_connected_event.addr);
-        append_peers(&mut list, peer_connected_event.peers);
+        append_address(&mut list, peer_connected_event.addr, public_key_pem);
+        append_peers(&mut list, peer_connected_event.peers, public_key_pem);
         PeerEvent::new(CONNECTED, list)
     }
 
     /// Event: disconnected.
-    pub fn disconnected(uid: String, addr: SocketAddr) -> PeerEvent {
+    pub fn disconnected(uid: String, addr: SocketAddr, public_key_pem: &Vec<u8>) -> PeerEvent {
         let mut list = Vec::new();
         append_uid(&mut list, uid);
-        append_address(&mut list, addr);
+        append_address(&mut list, addr, public_key_pem);
         PeerEvent::new(DISCONNECTED, list)
     }
 
