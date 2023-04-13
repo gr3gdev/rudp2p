@@ -3,8 +3,8 @@ Feature: Exchange messages
   Scenario: Send a text to all peers
     Given the following peers are started
       | Name       | Port |
-      | Dispatcher | 9100 |
-    When the following peers connect to "Dispatcher"
+      | P0 | 9100 |
+    When the following peers connect to "P0"
       | Name | Port |
       | P1   | 9101 |
       | P2   | 9102 |
@@ -26,8 +26,8 @@ Feature: Exchange messages
   Scenario: Send a file to a peer
     Given the following peers are started
       | Name       | Port |
-      | Dispatcher | 9200 |
-    When the following peers connect to "Dispatcher"
+      | P0 | 9200 |
+    When the following peers connect to "P0"
       | Name | Port |
       | P1   | 9201 |
       | P2   | 9202 |

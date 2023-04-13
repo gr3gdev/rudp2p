@@ -4,13 +4,15 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::MutexGuard;
 use std::time::Instant;
 
-use openssl::pkey::{Private, Public};
+use openssl::pkey::Private;
 use openssl::rsa::Rsa;
 
 use event::PeerEvent;
 use message::PeerMessage;
 
-use crate::peer::event::{PeerConnectingEvent, Split};
+use crate::peer::event::common::Split;
+use crate::peer::event::connecting::PeerConnectingEvent;
+use crate::peer::event::ident::PeerDisconnectingEvent;
 use crate::peer::router::Router;
 use crate::server::{Event, Message, Server, ServerStatus, Udp};
 use crate::utils::{OptionalClosure, ThreadSafe};
@@ -42,8 +44,8 @@ pub struct RemotePeer {
     uid: String,
     /// Address of the peer.
     addr: SocketAddr,
-    /// RSA public key for encrypt data.
-    public_key: Option<Rsa<Public>>,
+    /// Public key for encrypt messages.
+    public_key_pem: Option<Vec<u8>>,
 }
 
 pub struct Peer {
@@ -61,9 +63,9 @@ pub struct Peer {
     on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
     /// Keys for encryption.
     keys: Rsa<Private>,
-    /// Map for connecting event.
+    /// Map for connecting connecting.
     connecting_map: ThreadSafe<HashMap<String, Vec<PeerEvent>>>,
-    /// Map for connected event.
+    /// Map for connected connecting.
     connected_map: ThreadSafe<HashMap<String, Vec<PeerEvent>>>,
 }
 
@@ -86,7 +88,7 @@ impl Clone for RemotePeer {
         RemotePeer {
             uid: self.uid.clone(),
             addr: self.addr.clone(),
-            public_key: None,
+            public_key_pem: self.public_key_pem.clone(),
         }
     }
 }
@@ -112,7 +114,7 @@ impl Server<Peer> for Peer {
         let shared_peers = self.peers.clone();
         let peers = shared_peers.lock().unwrap();
         for peer in peers.values() {
-            self.send(PeerEvent::disconnecting(self.uid.clone()), &peer.addr);
+            self.send(PeerDisconnectingEvent::event(self.uid.clone()), &peer.addr);
         }
         self.server.close();
     }
@@ -140,7 +142,7 @@ impl Exchange for Peer {
 
     fn connect(&mut self, addr: &SocketAddr) -> () {
         self.start();
-        self.server.send(PeerEvent::connecting(PeerConnectingEvent {
+        self.server.send(PeerConnectingEvent::event(PeerConnectingEvent {
             uid: self.uid.clone(),
             public_key_pem: self.keys.public_key_to_pem().expect("Unable to get pem from public key"),
         }), addr);

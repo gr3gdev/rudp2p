@@ -16,9 +16,6 @@ harness = false
 name = "peer"
 harness = false
 
-[[test]]
-name = "unit_tests"
-
 [dependencies]
 openssl-sys = "0.9"
 openssl = "0.10"

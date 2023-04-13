@@ -37,7 +37,7 @@ struct PeerMessageData {
 }
 
 impl PeerData {
-    fn new(name: String, port: u16, connect: Option<SocketAddr>, authorized_peers: Vec<String>) -> PeerData {
+    fn new(name: String, port: u16, connect: Option<SocketAddr>) -> PeerData {
         let mut peer = Peer::new(port, Some(name));
         let peer_uid = peer.uid.clone();
         let addr = peer.addr();
@@ -190,7 +190,7 @@ impl PeersWorld {
         peer.peer.close();
     }
 
-    fn add_peer(&mut self, name: String, port: u16, connect: Option<String>, authorized_peers: Vec<String>) {
+    fn add_peer(&mut self, name: String, port: u16, connect: Option<String>) {
         let addr;
         if let Some(dispatcher_name) = connect {
             let peer_data = self.find(&dispatcher_name);
@@ -198,7 +198,7 @@ impl PeersWorld {
         } else {
             addr = None;
         }
-        self.servers.push(PeerData::new(name.clone(), port, addr, authorized_peers));
+        self.servers.push(PeerData::new(name.clone(), port, addr));
     }
 
     fn close(&self) -> LocalBoxFuture<()> {
@@ -218,7 +218,7 @@ async fn start_peers(w: &mut PeersWorld, step: &Step) {
         for row in table.rows.iter().skip(1) { // NOTE: skip header
             let name = &row[0];
             let port = row[1].parse::<u16>().unwrap();
-            w.add_peer(name.clone(), port, None, Vec::new());
+            w.add_peer(name.clone(), port, None);
         }
     }
 }
@@ -237,7 +237,7 @@ async fn connect_peer(w: &mut PeersWorld, dispatcher_name: String, step: &Step) 
                 }
                 println!("{} {:?}", peer_name, authorized_peers);
             }
-            w.add_peer(peer_name.clone(), port, Some(dispatcher_name.clone()), authorized_peers);
+            w.add_peer(peer_name.clone(), port, Some(dispatcher_name.clone()));
         }
     }
 }

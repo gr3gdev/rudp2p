@@ -37,9 +37,9 @@ pub trait Server<T> {
 struct StopMessage {}
 
 pub struct Event {
-    /// Content of the event.
+    /// Content of the connecting.
     pub content: Vec<u8>,
-    /// Who has triggered this event.
+    /// Who has triggered this connecting.
     pub sender: SocketAddr,
 }
 
@@ -144,7 +144,7 @@ impl ServerStatus for Udp {
 }
 
 impl Udp {
-    pub(crate) fn new(port: u16) -> Udp {
+    pub fn new(port: u16) -> Udp {
         let addr = "127.0.0.1".parse::<IpAddr>()
             .expect("Error on IP");
         let socket_addr = SocketAddr::new(addr, port);

@@ -3,14 +3,14 @@ Feature: Dispatch connections
   Scenario: Connection and disconnection
     Given the following peers are started
       | Name       | Port |
-      | Dispatcher | 9000 |
-    When the following peers connect to "Dispatcher"
+      | P0 | 9000 |
+    When the following peers connect to "P0"
       | Name | Port |
       | P1   | 9001 |
     Then the peer "P1" receives
       | Event     | From |
       | Connected | P1   |
-    When the following peers connect to "Dispatcher"
+    When the following peers connect to "P0"
       | Name | Port |
       | P2   | 9002 |
     Then the peer "P1" receives
@@ -20,7 +20,7 @@ Feature: Dispatch connections
       | Event     | From |
       | Connected | P1   |
       | Connected | P2   |
-    When the following peers connect to "Dispatcher"
+    When the following peers connect to "P0"
       | Name | Port |
       | P3   | 9003 |
     Then the peer "P3" receives
@@ -45,8 +45,8 @@ Feature: Dispatch connections
   Scenario: Connection only with specifics peers
     Given the following peers are started
       | Name       | Port |
-      | Dispatcher | 9000 |
-    When the following peers connect to "Dispatcher"
+      | P0 | 9000 |
+    When the following peers connect to "P0"
       | Name | Port | Authorize connection with |
       | P1   | 9001 | P2                        |
       | P2   | 9002 | P1                        |

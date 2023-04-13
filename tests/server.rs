@@ -4,12 +4,22 @@ use cucumber::{gherkin::Step, given, then, when, World};
 use futures::future::LocalBoxFuture;
 use futures::FutureExt;
 
-use rudp2plib::server::{Event, Server, ServerStatus, Udp};
+use rudp2plib::server::{Event, Message, Server, ServerStatus, Udp};
 use rudp2plib::utils::ThreadSafe;
 
 use crate::common::wait_while_condition;
 
 mod common;
+
+struct ServerMessage {
+    message: String,
+}
+
+impl Message for ServerMessage {
+    fn content(&self) -> Vec<u8> {
+        self.message.as_bytes().to_vec()
+    }
+}
 
 #[derive(cucumber::World, Debug)]
 #[world(init = Self::new)]
@@ -76,7 +86,9 @@ async fn start_server(w: &mut ServersWorld, step: &Step) {
 async fn server_send_message(w: &mut ServersWorld, s1: String, message: String, s2: String) {
     let server1 = w.servers.get(&s1).unwrap();
     let server2 = w.servers.get(&s2).unwrap();
-    server1.send(message.as_bytes(), &server2.addr());
+    server1.send(ServerMessage {
+        message,
+    }, &server2.addr());
 }
 
 #[then(expr = "the server {string} receives {string} from the server {string}")]
