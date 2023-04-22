@@ -13,6 +13,7 @@ use crate::peer::router::event::{Route, RouterEvent};
 use crate::server::{Event, ServerStatus};
 
 pub(crate) mod event;
+mod data;
 
 // STRUCT
 

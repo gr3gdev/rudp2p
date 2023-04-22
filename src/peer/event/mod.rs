@@ -132,7 +132,7 @@ impl Merge<PeerEvent> for PeerEvent {
 }
 
 impl PeerEvent {
-    fn new(code: u8, data: Vec<u8>) -> PeerEvent {
+    pub(crate) fn new(code: u8, data: Vec<u8>) -> PeerEvent {
         PeerEvent {
             uid: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
