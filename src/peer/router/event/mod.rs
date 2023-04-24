@@ -1,19 +1,12 @@
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 
-use crate::peer::event::connected::router::ConnectedRouter;
-use crate::peer::event::connecting::router::ConnectingRouter;
-use crate::peer::event::ident::router::{DisconnectedRouter, DisconnectingRouter};
-use crate::peer::event::message::router::MessageRouter;
 use crate::peer::event::PeerEvent;
-use crate::peer::router::data::{Encoder, RouteData};
+use crate::peer::RemotePeer;
+use crate::peer::router::data::{DecodeData, Decoder, Encoder, RouteData};
 use crate::peer::router::Router;
 
-pub(crate) trait Route {
-    fn execute(&self, peer_event: PeerEvent, socket: &UdpSocket, sender: SocketAddr, router: &Router);
-}
-
 pub(crate) trait RouteEvent {
-    fn event(&self, peer_event: PeerEvent, router: &Router) -> PeerEvent;
+    fn responses_event(&self, peer_event: PeerEvent, remote_addr: SocketAddr, router: &Router) -> Option<Vec<PeerEvent>>;
 }
 
 pub(crate) enum RouterEvent {
@@ -35,48 +28,121 @@ impl RouterEvent {
             _ => panic!("Event not found !")
         }
     }
-}
 
-impl Route for RouterEvent {
-    fn execute(&self, peer_event: PeerEvent, socket: &UdpSocket, sender: SocketAddr, router: &Router) {
-        match self {
-            RouterEvent::Disconnecting => DisconnectingRouter::execute(peer_event, socket, sender, router),
-            RouterEvent::Connecting => ConnectingRouter::execute(peer_event, socket, sender, router),
-            RouterEvent::Connected => ConnectedRouter::execute(peer_event, socket, router),
-            RouterEvent::Message => MessageRouter::execute(peer_event, router),
-            RouterEvent::Disconnected => DisconnectedRouter::execute(peer_event, router),
-        }
-    }
-}
-
-impl RouteEvent for RouterEvent {
-    fn event(&self, peer_event: PeerEvent, router: &Router) -> PeerEvent {
+    pub(crate) fn new_event(&self, route_data: Vec<RouteData>) -> PeerEvent {
         let code;
         let mut data = Vec::new();
         match self {
             RouterEvent::Disconnecting => {
                 code = 0;
-                data.append(&mut RouteData::Uid(peer_event.uid).encode());
             }
             RouterEvent::Connecting => {
                 code = 1;
-                data.append(&mut RouteData::Uid(peer_event.uid).encode());
             }
             RouterEvent::Connected => {
-                let peers = router.shared_peers.lock().unwrap();
                 code = 2;
-                data.append(&mut RouteData::Uid(peer_event.uid).encode());
-                data.append(&mut RouteData::PublicKey(router.public_key_pem.clone()).encode());
-                data.append(&mut RouteData::Peers(peers.values().cloned().collect(), router.public_key_pem.clone()).encode());
             }
             RouterEvent::Message => {
                 code = 3;
             }
             RouterEvent::Disconnected => {
                 code = 4;
-                data.append(&mut RouteData::Uid(peer_event.uid).encode());
             }
         }
+        for d in &route_data {
+            data.append(&mut d.encode());
+        }
         PeerEvent::new(code, data)
+    }
+}
+
+impl RouteEvent for RouterEvent {
+    fn responses_event(&self, peer_event: PeerEvent, remote_addr: SocketAddr, router: &Router) -> Option<Vec<PeerEvent>> {
+        let message = peer_event.message;
+        match self {
+            RouterEvent::Disconnecting => {
+                Some(vec![
+                    RouterEvent::Disconnected.new_event(
+                        RouteData::decode(message, vec![
+                            DecodeData::Uid
+                        ]))
+                ])
+            }
+            RouterEvent::Connecting => {
+                Some(vec![
+                    RouterEvent::Connected.new_event(
+                        RouteData::decode(message, vec![
+                            DecodeData::Uid,
+                            DecodeData::PublicKey,
+                            DecodeData::Peers(router.private_key_pem.clone(), router.passphrase.to_string()),
+                        ]))
+                ])
+            }
+            RouterEvent::Connected => {
+                let guard_connected = router.shared_connected.lock().unwrap();
+                let mut peers = router.shared_peers.lock().unwrap();
+                let data = RouteData::decode(message, vec![
+                    DecodeData::Uid,
+                    DecodeData::PublicKey,
+                    DecodeData::Peers(router.private_key_pem.clone(), router.passphrase.to_string()),
+                ]);
+                let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
+                let RouteData::PublicKey(public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
+                let RouteData::Peers(remote_peers, _) = &data[2] else { panic!("Peers not found !") };
+                if !RemotePeer::exists(&peers, &uid) {
+                    peers.insert(uid.clone(), RemotePeer {
+                        uid: uid.clone(),
+                        addr: remote_addr,
+                        public_key_pem: Some(public_key_pem.clone()),
+                    });
+                }
+                if let Some(ref mut connected) = *guard_connected.borrow_mut() {
+                    connected(&uid.clone());
+                }
+                if !remote_peers.is_empty() {
+                    // Share peers
+                    let mut connecting_peers = Vec::new();
+                    for remote in remote_peers {
+                        connecting_peers.push(RouterEvent::Connecting.new_event(
+                            vec![
+                                RouteData::Uid(remote.uid.clone()),
+                                RouteData::PublicKey(remote.public_key_pem.clone().unwrap()),
+                            ]
+                        ));
+                    }
+                    Some(connecting_peers)
+                } else {
+                    None
+                }
+            }
+            RouterEvent::Message => {
+                let guard_message = router.shared_message.lock().unwrap();
+                let data = RouteData::decode(message, vec![
+                    DecodeData::Uid,
+                    DecodeData::Message(router.private_key_pem.clone(), router.passphrase.to_string()),
+                ]);
+                let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
+                let RouteData::Message(message, _) = &data[1] else { panic!("Message not found !") };
+                if let Some(ref mut message_received) = *guard_message.borrow_mut() {
+                    message_received(message, &uid.clone());
+                }
+                None
+            }
+            RouterEvent::Disconnected => {
+                let guard_disconnected = router.shared_disconnected.lock().unwrap();
+                let mut peers = router.shared_peers.lock().unwrap();
+                let data = RouteData::decode(message, vec![
+                    DecodeData::Uid
+                ]);
+                let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
+                if RemotePeer::exists(&peers, &uid) {
+                    peers.remove(&uid.clone());
+                }
+                if let Some(ref mut disconnected) = *guard_disconnected.borrow_mut() {
+                    disconnected(&uid.clone());
+                }
+                None
+            }
+        }
     }
 }

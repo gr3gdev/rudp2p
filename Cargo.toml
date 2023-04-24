@@ -9,10 +9,6 @@ path = "src/lib.rs"
 doc = true
 
 [[test]]
-name = "server"
-harness = false
-
-[[test]]
 name = "peer"
 harness = false
 

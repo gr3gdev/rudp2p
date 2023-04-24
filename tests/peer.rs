@@ -8,7 +8,7 @@ use futures::FutureExt;
 
 use rudp2plib::peer::{Exchange, Peer};
 use rudp2plib::peer::message::PeerMessage;
-use rudp2plib::server::{Server, ServerStatus};
+use rudp2plib::server::ServerStatus;
 use rudp2plib::utils::{read_file, ThreadSafe};
 
 use crate::common::wait_while_condition;
@@ -65,7 +65,7 @@ impl PeerData {
             peer.connect(&dispatcher);
         } else {
             println!("Start {}", peer.uid);
-            peer.start();
+            peer.open();
         }
         PeerData {
             peer,
@@ -102,35 +102,35 @@ impl PeerData {
     }
 
     fn is_connected_with(&self, uid: &String) {
-        wait_while_condition("wait Connection", &||
-                !self.on_peer_connected.lock().unwrap().contains(uid));
+        wait_while_condition("Connection", &||
+            !self.on_peer_connected.lock().unwrap().contains(uid));
         let on_peer_connected = self.on_peer_connected.lock().unwrap();
         assert!(on_peer_connected.contains(uid));
     }
 
     fn is_not_connected_with(&self, uid: &String) {
-        wait_while_condition("wait Connection", &||
+        wait_while_condition("Connection", &||
             self.on_peer_connected.lock().unwrap().is_empty());
         let on_peer_connected = self.on_peer_connected.lock().unwrap();
         assert!(!on_peer_connected.contains(uid));
     }
 
     fn is_disconnected_with(&self, uid: &String) {
-        wait_while_condition("wait Disconnection", &||
+        wait_while_condition("Disconnection", &||
             !self.on_peer_disconnected.lock().unwrap().contains(uid));
         let on_peer_disconnected = self.on_peer_disconnected.lock().unwrap();
         assert!(on_peer_disconnected.contains(uid));
     }
 
     fn is_not_disconnected_with(&self, uid: &String) {
-        wait_while_condition("wait Disconnection", &||
+        wait_while_condition("Disconnection", &||
             self.on_peer_disconnected.lock().unwrap().is_empty());
         let on_peer_disconnected = self.on_peer_disconnected.lock().unwrap();
         assert!(!on_peer_disconnected.contains(uid));
     }
 
     fn is_not_message_received(&self, uid: &String) {
-        wait_while_condition("wait Message reception", &|| self.on_message_received.lock().unwrap().is_empty());
+        wait_while_condition("Message reception", &|| self.on_message_received.lock().unwrap().is_empty());
         let on_message_received = self.on_message_received.lock().unwrap();
         let mut senders = Vec::new();
         for m in on_message_received.iter() {
@@ -141,7 +141,7 @@ impl PeerData {
     }
 
     fn is_message_received(&self, event: String, uid: &String) {
-        wait_while_condition("wait Message reception", &|| self.on_message_received.lock().unwrap().is_empty());
+        wait_while_condition("Message reception", &|| self.on_message_received.lock().unwrap().is_empty());
         let on_message_received = self.on_message_received.lock().unwrap();
         let mut messages_by_sender: HashMap<String, Vec<PeerMessage>> = HashMap::new();
         for m in on_message_received.iter() {
@@ -206,7 +206,7 @@ impl PeersWorld {
             for peer_data in self.servers.iter() {
                 let peer = &peer_data.peer;
                 peer.close();
-                wait_while_condition("wait peer close", &|| peer.alive());
+                wait_while_condition("Peer close", &|| peer.alive());
             }
         }.boxed_local()
     }
@@ -300,5 +300,5 @@ fn main() {
         .after(|_feature, _rule, _scenario, _ev, world| {
             world.unwrap().close()
         })
-        .run_and_exit("features/peer"));
+        .run_and_exit("features"));
 }

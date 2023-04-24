@@ -12,7 +12,7 @@ pub fn wait_while_condition(message: &str, condition: &dyn Fn() -> bool) {
         let current = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap().as_millis();
-        if current - start > 60000 {
+        if current - start > 5000 {
             panic!("Timeout {} !", message);
         }
     }

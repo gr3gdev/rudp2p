@@ -20,7 +20,7 @@ pub fn read_file(path: &str) -> Vec<u8> {
 }
 
 /// Write a file into a path from [u8].
-pub fn write_file(data: &[u8], path: &str) -> File {
+pub(crate) fn write_file(data: &[u8], path: &str) -> File {
     let mut file = File::create(path).expect(format!("Unable to create the file {}", path).as_str());
     file.write(data).expect("Unable to write into file");
     file
@@ -34,7 +34,7 @@ pub struct ThreadSafe<T> {
     data: Arc<Mutex<T>>,
 }
 
-pub struct OptionalClosure<T: ?Sized> {
+pub(crate) struct OptionalClosure<T: ?Sized> {
     /// Optional closure.
     data: ThreadSafe<RefCell<Option<Box<T>>>>,
 }
@@ -58,13 +58,13 @@ impl<T> ThreadSafe<T> {
 }
 
 impl<T: ?Sized> OptionalClosure<T> {
-    pub fn new(val: Option<Box<T>>) -> OptionalClosure<T> {
+    pub(crate) fn new(val: Option<Box<T>>) -> OptionalClosure<T> {
         OptionalClosure {
             data: ThreadSafe::new(RefCell::new(val))
         }
     }
 
-    pub fn set(data: &OptionalClosure<T>, closure: Box<T>) {
+    pub(crate) fn set(data: &OptionalClosure<T>, closure: Box<T>) {
         let closure = Some(closure);
         let closure_cell = RefCell::new(closure);
         let closure_mutex = data.data.clone();
@@ -72,7 +72,7 @@ impl<T: ?Sized> OptionalClosure<T> {
         *guard = closure_cell;
     }
 
-    pub fn shared(&self) -> Arc<Mutex<RefCell<Option<Box<T>>>>> {
+    pub(crate) fn shared(&self) -> Arc<Mutex<RefCell<Option<Box<T>>>>> {
         self.data.clone()
     }
 }

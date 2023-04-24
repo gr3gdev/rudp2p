@@ -11,8 +11,8 @@ use event::PeerEvent;
 use message::PeerMessage;
 
 use crate::peer::event::common::Split;
-use crate::peer::event::connecting::PeerConnectingEvent;
-use crate::peer::event::ident::PeerDisconnectingEvent;
+use crate::peer::router::data::RouteData;
+use crate::peer::router::event::RouterEvent;
 use crate::peer::router::Router;
 use crate::server::{Event, Message, Server, ServerStatus, Udp};
 use crate::utils::{OptionalClosure, ThreadSafe};
@@ -63,10 +63,6 @@ pub struct Peer {
     on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
     /// Keys for encryption.
     keys: Rsa<Private>,
-    /// Map for connecting connecting.
-    connecting_map: ThreadSafe<HashMap<String, Vec<PeerEvent>>>,
-    /// Map for connected connecting.
-    connected_map: ThreadSafe<HashMap<String, Vec<PeerEvent>>>,
 }
 
 // IMPL
@@ -95,7 +91,7 @@ impl Clone for RemotePeer {
 
 impl Dispatch for Peer {
     fn routing(&mut self) {
-        let router = Router::new(self);
+        let mut router = Router::new(self);
         self.server.set_on_received(Box::new(move |e: &Event, socket: &UdpSocket| {
             router.route(e, socket);
         }));
@@ -110,13 +106,15 @@ impl Server<Peer> for Peer {
         }
     }
 
-    fn close(&self) -> () {
+    fn stop(&self) -> () {
         let shared_peers = self.peers.clone();
         let peers = shared_peers.lock().unwrap();
         for peer in peers.values() {
-            self.send(PeerDisconnectingEvent::event(self.uid.clone()), &peer.addr);
+            self.send(RouterEvent::Disconnecting.new_event(vec![
+                RouteData::Uid(self.uid.clone())
+            ]), &peer.addr);
         }
-        self.server.close();
+        self.server.stop();
     }
 
     fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message {
@@ -142,10 +140,10 @@ impl Exchange for Peer {
 
     fn connect(&mut self, addr: &SocketAddr) -> () {
         self.start();
-        self.server.send(PeerConnectingEvent::event(PeerConnectingEvent {
-            uid: self.uid.clone(),
-            public_key_pem: self.keys.public_key_to_pem().expect("Unable to get pem from public key"),
-        }), addr);
+        self.server.send(RouterEvent::Connecting.new_event(vec![
+            RouteData::Uid(self.uid.clone()),
+            RouteData::PublicKey(self.keys.public_key_to_pem().expect("Unable to get pem from public key")),
+        ]), addr);
     }
 }
 
@@ -170,8 +168,6 @@ impl Peer {
             on_peer_connected: OptionalClosure::new(None),
             on_peer_disconnected: OptionalClosure::new(None),
             keys: Rsa::generate(1024).expect("Unable to generate keys"),
-            connecting_map: ThreadSafe::new(HashMap::new()),
-            connected_map: ThreadSafe::new(HashMap::new()),
         }
     }
 
@@ -190,7 +186,10 @@ impl Peer {
     fn send_to_remote_peer(&self, message: PeerMessage, remote_peer: &RemotePeer) {
         let addr = remote_peer.addr;
         if addr != self.addr() {
-            let peer_event = message.to_event(&self.uid);
+            let peer_event = RouterEvent::Message.new_event(vec![
+                RouteData::Uid(self.uid.clone()),
+                RouteData::Message(message, self.keys.public_key_to_pem().expect("Unable to get pem from public key")),
+            ]);
             self.send_with_server(peer_event, &addr);
         }
     }
@@ -199,6 +198,14 @@ impl Peer {
         for event in PeerEvent::split(peer_event, 1024) {
             self.server.send(event, addr);
         }
+    }
+
+    pub fn open(&mut self) {
+        self.start();
+    }
+
+    pub fn close(&self) {
+        self.stop();
     }
 }
 

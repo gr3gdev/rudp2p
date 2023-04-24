@@ -1,23 +1,10 @@
 use std::time::SystemTime;
 
-use crate::peer::event::common::{append_message, append_uid, Merge, Parser, Split};
+use crate::peer::event::common::{Merge, Parser, Split};
 use crate::server::Message;
 
 pub(crate) mod common;
-pub(crate) mod connecting;
-pub(crate) mod ident;
-pub(crate) mod connected;
-pub(crate) mod message;
-
 mod tests;
-
-// CONSTANTS
-
-pub(crate) static DISCONNECTING: u8 = 0;
-pub(crate) static CONNECTING: u8 = 1;
-pub(crate) static CONNECTED: u8 = 2;
-pub(crate) static MESSAGE: u8 = 3;
-pub(crate) static DISCONNECTED: u8 = 9;
 
 // STRUCT
 
@@ -69,9 +56,11 @@ impl Clone for PeerEvent {
 impl Message for PeerEvent {
     fn content(&self) -> Vec<u8> {
         let mut data = Vec::new();
-        append_uid(&mut data, self.uid.clone());
+        let mut uid_data = self.uid.as_bytes().to_vec();
+        data.push(uid_data.len() as u8);
         data.append(&mut self.start.to_ne_bytes().to_vec());
         data.append(&mut self.total.to_ne_bytes().to_vec());
+        data.append(&mut uid_data);
         data.push(self.code);
         data.append(&mut self.message.clone());
         data
@@ -143,13 +132,5 @@ impl PeerEvent {
             code,
             message: data,
         }
-    }
-
-    /// Event: message.
-    pub fn message(uid: String, message: Vec<u8>) -> PeerEvent {
-        let mut list = Vec::new();
-        append_uid(&mut list, uid);
-        append_message(&mut list, message);
-        PeerEvent::new(MESSAGE, list)
     }
 }

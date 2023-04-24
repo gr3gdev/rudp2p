@@ -2,7 +2,6 @@ use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::time::SystemTime;
 
-use crate::peer::event::PeerEvent;
 use crate::utils::{read_file, write_file};
 
 // STRUCT
@@ -33,34 +32,23 @@ impl Clone for PeerMessage {
 
 impl PeerMessage {
     pub fn from_text(text: &str) -> PeerMessage {
-        PeerMessage::new(Vec::from(text))
+        PeerMessage::new(Vec::from(text), None)
     }
 
     pub fn from_file(path: &str) -> PeerMessage {
-        PeerMessage::new(read_file(path))
+        PeerMessage::new(read_file(path), None)
     }
 
-    fn new(content: Vec<u8>) -> PeerMessage {
+    pub(crate) fn new(content: Vec<u8>, uid: Option<Vec<u8>>) -> PeerMessage {
         PeerMessage {
-            uid: Vec::from(SystemTime::now()
+            uid: uid.or_else(|| Some(Vec::from(SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap().as_millis()
-                .to_string()),
+                .to_string()))).unwrap(),
             start: 0,
             total: content.len(),
             content,
         }
-    }
-
-    pub fn to_event(&self, uid: &String) -> PeerEvent {
-        let mut data: Vec<u8> = Vec::new();
-        let size = self.uid.len() as u8;
-        data.push(size);
-        data.append(&mut self.start.to_ne_bytes().to_vec());
-        data.append(&mut self.total.to_ne_bytes().to_vec());
-        data.append(&mut self.uid.to_vec());
-        data.append(&mut self.content.clone());
-        PeerEvent::message(uid.clone(), data)
     }
 
     pub fn parse(data: &Vec<u8>) -> PeerMessage {
