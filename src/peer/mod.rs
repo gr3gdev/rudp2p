@@ -92,8 +92,12 @@ impl Clone for RemotePeer {
 impl Dispatch for Peer {
     fn routing(&mut self) {
         let mut router = Router::new(self);
+        let local_addr = self.server.addr();
         self.server.set_on_received(Box::new(move |e: &Event, socket: &UdpSocket| {
-            router.route(e, socket);
+            if local_addr != e.sender {
+                // Ignore internal routes
+                router.route(e, socket);
+            }
         }));
     }
 }

@@ -1,10 +1,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 
 use openssl::symm::Cipher;
 
+use crate::logger::Logger;
 use crate::peer::{Peer, RemotePeer};
 use crate::peer::event::common::{Merge, Parser, send_with_socket};
 use crate::peer::event::PeerEvent;
@@ -18,8 +20,10 @@ pub(crate) mod data;
 // STRUCT
 
 pub(crate) struct Router {
+    pub(crate) peer_uid: String,
     pub(crate) passphrase: &'static str,
     pub(crate) private_key_pem: Vec<u8>,
+    pub(crate) public_key_pem: Vec<u8>,
     pub(crate) shared_peers: Arc<Mutex<HashMap<String, RemotePeer>>>,
     pub(crate) shared_message: Arc<Mutex<RefCell<Option<Box<dyn FnMut(&PeerMessage, &String) -> () + Send + Sync>>>>>,
     pub(crate) shared_connected: Arc<Mutex<RefCell<Option<Box<dyn FnMut(&String) -> () + Send + Sync>>>>>,
@@ -36,10 +40,14 @@ impl Router {
         let private_key_pem = keys.private_key_to_pem_passphrase(
             Cipher::aes_256_cbc(),
             passphrase.as_bytes(),
-        ).unwrap();
+        ).expect("Unable to generate private key pem");
+        let public_key_pem = keys.public_key_to_pem()
+            .expect("Unable to generate public key pem");
         Router {
+            peer_uid: peer.uid.clone(),
             passphrase,
             private_key_pem,
+            public_key_pem,
             shared_peers: peer.peers.clone(),
             shared_message: peer.on_message_received.shared(),
             shared_connected: peer.on_peer_connected.shared(),
@@ -50,13 +58,20 @@ impl Router {
 
     pub(crate) fn route(&mut self, e: &Event, socket: &UdpSocket) {
         let peer_event = self.parse_complete_event(e);
+        let event_uid = peer_event.uid.clone();
+        Logger::info(format!("[{}] \x1b[33mOpen\x1b[0m peer event : \x1b[33m{}\x1b[0m from \x1b[33m{}\x1b[0m", self, event_uid, e.sender));
         if peer_event.is_complete() {
             let router_event = RouterEvent::find_by_code(peer_event.code);
-            if let Some(responses_peer_event) = router_event.responses_event(peer_event, socket.peer_addr().unwrap(), self) {
+            Logger::info(format!("[{}] Router event : {}", self.peer_uid, router_event));
+            if let Some(responses_peer_event) = router_event.responses_event(peer_event, e.sender, self) {
                 for response in responses_peer_event {
+                    Logger::info(format!("[{}] \x1b[34mResponse\x1b[0m peer event : \x1b[33m{}\x1b[0m to \x1b[33m{}\x1b[0m", self, response.uid, e.sender));
                     send_with_socket(socket, response, &e.sender);
                 }
             }
+            Logger::info(format!("[{}] \x1b[33mClose\x1b[0m peer event : \x1b[33m{}\x1b[0m", self, event_uid));
+        } else {
+            Logger::info(format!("[{}] Peer event not completed : \x1b[33m{}\x1b[0m", self, event_uid));
         }
     }
 
@@ -70,5 +85,12 @@ impl Router {
         self.complete_event.insert(peer_event.uid, events.clone());
         let peer_event = PeerEvent::merge(&events.clone());
         peer_event
+    }
+}
+
+impl Display for Router {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let peers = self.shared_peers.lock().unwrap();
+        write!(f, "{} ({:?})", self.peer_uid, peers)
     }
 }

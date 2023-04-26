@@ -28,7 +28,6 @@ pub trait Merge<T> {
 
 pub(crate) fn send_with_socket(socket: &UdpSocket, peer_event: PeerEvent, addr: &SocketAddr) {
     for event in PeerEvent::split(peer_event, 1024) {
-        println!("[ Socket ] {} send data to {}", socket.peer_addr().unwrap(), addr);
         socket.send_to(event.content().as_slice(), addr).unwrap();
     }
 }

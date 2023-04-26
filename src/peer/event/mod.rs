@@ -125,7 +125,8 @@ impl PeerEvent {
         PeerEvent {
             uid: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap().as_millis()
+                .unwrap()
+                .as_nanos()
                 .to_string(),
             start: 0,
             total: data.len(),

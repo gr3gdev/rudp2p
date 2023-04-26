@@ -36,6 +36,10 @@ struct PeerMessageData {
     sender: String,
 }
 
+fn log(message: String) {
+    println!("\x1b[44m\x1b[36m[TEST]\x1b[0m {}", message);
+}
+
 impl PeerData {
     fn new(name: String, port: u16, connect: Option<SocketAddr>) -> PeerData {
         let mut peer = Peer::new(port, Some(name));
@@ -52,7 +56,7 @@ impl PeerData {
         let on_peer_connected = ThreadSafe::new(Vec::new());
         let shared_on_peer_connected = on_peer_connected.clone();
         peer.set_on_peer_connected(move |u| {
-            println!("{} connected with {}", peer_uid, u);
+            log(format!("{} connected with {}", peer_uid, u));
             shared_on_peer_connected.lock().unwrap().push(u.clone());
         });
         let on_peer_disconnected = ThreadSafe::new(Vec::new());
@@ -61,10 +65,10 @@ impl PeerData {
             shared_on_peer_disconnected.lock().unwrap().push(u.clone());
         });
         if let Some(dispatcher) = connect {
-            println!("Connect {} with {}", peer.uid, dispatcher);
+            log(format!("Connect {} with {}", peer.uid, dispatcher));
             peer.connect(&dispatcher);
         } else {
-            println!("Start {}", peer.uid);
+            log(format!("Start {}", peer.uid));
             peer.open();
         }
         PeerData {
@@ -91,46 +95,67 @@ impl PeerData {
 
     fn send_to_all(&self, data: String) {
         let message = Self::get_message(&data);
-        println!("{} sends [{}] to all", self.addr, data);
+        log(format!("{} sends [{}] to all", self.addr, data));
         self.peer.send_to_all(message);
     }
 
     fn send_to(&self, data: String, other: &String) {
         let message = Self::get_message(&data);
-        println!("{} sends [{}] to {}", self.addr, data, other);
+        log(format!("{} sends [{}] to {}", self.addr, data, other));
         self.peer.send_to(message, &other);
     }
 
     fn is_connected_with(&self, uid: &String) {
-        wait_while_condition("Connection", &||
-            !self.on_peer_connected.lock().unwrap().contains(uid));
+        let peer_uid = self.peer.uid.clone();
+        wait_while_condition(&|| {
+            let guard = self.on_peer_connected.lock().unwrap();
+            log(format!("Waiting {} is connected with {} - {:?}", peer_uid, uid, guard));
+            !guard.contains(uid)
+        });
         let on_peer_connected = self.on_peer_connected.lock().unwrap();
         assert!(on_peer_connected.contains(uid));
     }
 
     fn is_not_connected_with(&self, uid: &String) {
-        wait_while_condition("Connection", &||
-            self.on_peer_connected.lock().unwrap().is_empty());
+        let peer_uid = self.peer.uid.clone();
+        wait_while_condition(&|| {
+            let guard = self.on_peer_connected.lock().unwrap();
+            log(format!("Waiting {} is not connected with {} - {:?}", peer_uid, uid, guard));
+            guard.contains(uid)
+        });
         let on_peer_connected = self.on_peer_connected.lock().unwrap();
         assert!(!on_peer_connected.contains(uid));
     }
 
     fn is_disconnected_with(&self, uid: &String) {
-        wait_while_condition("Disconnection", &||
-            !self.on_peer_disconnected.lock().unwrap().contains(uid));
+        let peer_uid = self.peer.uid.clone();
+        wait_while_condition(&|| {
+            let guard = self.on_peer_disconnected.lock().unwrap();
+            log(format!("Waiting {} is disconnected with {} - {:?}", peer_uid, uid, guard));
+            !guard.contains(uid)
+        });
         let on_peer_disconnected = self.on_peer_disconnected.lock().unwrap();
         assert!(on_peer_disconnected.contains(uid));
     }
 
     fn is_not_disconnected_with(&self, uid: &String) {
-        wait_while_condition("Disconnection", &||
-            self.on_peer_disconnected.lock().unwrap().is_empty());
+        let peer_uid = self.peer.uid.clone();
+        wait_while_condition(&|| {
+            let guard = self.on_peer_disconnected.lock().unwrap();
+            log(format!("Waiting {} is not disconnected with {} - {:?}", peer_uid, uid, guard));
+            guard.contains(uid)
+        });
         let on_peer_disconnected = self.on_peer_disconnected.lock().unwrap();
         assert!(!on_peer_disconnected.contains(uid));
     }
 
     fn is_not_message_received(&self, uid: &String) {
-        wait_while_condition("Message reception", &|| self.on_message_received.lock().unwrap().is_empty());
+        let peer_uid = self.peer.uid.clone();
+        wait_while_condition(&|| {
+            let guard = self.on_message_received.lock().unwrap();
+            log(format!("Waiting {} is not received message from {} - {:?}", peer_uid, uid, guard));
+            guard.iter().find(|d| d.sender.eq(uid)).is_some()
+        });
         let on_message_received = self.on_message_received.lock().unwrap();
         let mut senders = Vec::new();
         for m in on_message_received.iter() {
@@ -141,7 +166,12 @@ impl PeerData {
     }
 
     fn is_message_received(&self, event: String, uid: &String) {
-        wait_while_condition("Message reception", &|| self.on_message_received.lock().unwrap().is_empty());
+        let peer_uid = self.peer.uid.clone();
+        wait_while_condition(&|| {
+            let guard = self.on_message_received.lock().unwrap();
+            log(format!("Waiting {} is received message from {} - {:?}", peer_uid, uid, guard));
+            guard.iter().find(|d| d.sender.eq(uid)).is_none()
+        });
         let on_message_received = self.on_message_received.lock().unwrap();
         let mut messages_by_sender: HashMap<String, Vec<PeerMessage>> = HashMap::new();
         for m in on_message_received.iter() {
@@ -206,7 +236,10 @@ impl PeersWorld {
             for peer_data in self.servers.iter() {
                 let peer = &peer_data.peer;
                 peer.close();
-                wait_while_condition("Peer close", &|| peer.alive());
+                wait_while_condition(&|| {
+                    log(format!("Waiting while peer is alive : {}", peer.alive()));
+                    peer.alive()
+                });
             }
         }.boxed_local()
     }
@@ -235,7 +268,7 @@ async fn connect_peer(w: &mut PeersWorld, dispatcher_name: String, step: &Step) 
                 for peer in peers {
                     authorized_peers.push(peer.to_string());
                 }
-                println!("{} {:?}", peer_name, authorized_peers);
+                log(format!("{} {:?}", peer_name, authorized_peers));
             }
             w.add_peer(peer_name.clone(), port, Some(dispatcher_name.clone()));
         }
@@ -292,6 +325,8 @@ async fn receive_event(w: &mut PeersWorld, peer_name: String, step: &Step) {
                 peer_data.is_message_received(event.clone(), sender_name);
             }
         }
+    } else {
+        panic!("Peer not exist with the name : {}", peer_name);
     }
 }
 

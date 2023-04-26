@@ -43,25 +43,29 @@ impl Decoder for RouteData {
                     size += 8 + public_key_size;
                 }
                 DecodeData::Peers(private_key_pem, passphrase) => {
-                    let real_size = get_size_from_ne_bytes(&message, size);
-                    let peers = &message[size + 8..message.len()];
-                    let encrypt_peers = peers.to_vec();
-                    let mut peers = decrypt(&private_key_pem, passphrase.as_str(), encrypt_peers);
-                    peers.truncate(real_size);
-                    let list_peers = String::from_utf8(peers).unwrap();
-                    let peers_data = list_peers.split(",").collect::<Vec<&str>>();
-                    let mut peers = Vec::new();
-                    for peer in peers_data {
-                        let data = peer.split("|").collect::<Vec<&str>>();
-                        if data.len() >= 2 {
-                            peers.push(RemotePeer {
-                                uid: data.get(0).expect("Uid not found").to_string(),
-                                addr: data.get(1).expect("Address not found").to_string().parse().expect("Unable to parse socket address"),
-                                public_key_pem: None,
-                            })
+                    if size < message.len() {
+                        let real_size = get_size_from_ne_bytes(&message, size);
+                        let peers = &message[size + 8..message.len()];
+                        let encrypt_peers = peers.to_vec();
+                        let mut peers = decrypt(&private_key_pem, passphrase.as_str(), encrypt_peers);
+                        peers.truncate(real_size);
+                        let list_peers = String::from_utf8(peers).expect("Unable to read list of peers");
+                        let peers_data = list_peers.split(",").collect::<Vec<&str>>();
+                        let mut peers = Vec::new();
+                        for peer in peers_data {
+                            let data = peer.split("|").collect::<Vec<&str>>();
+                            if data.len() >= 2 {
+                                peers.push(RemotePeer {
+                                    uid: data.get(0).expect("Uid not found").to_string(),
+                                    addr: data.get(1).expect("Address not found").to_string().parse().expect("Unable to parse socket address"),
+                                    public_key_pem: None,
+                                })
+                            }
                         }
+                        data.push(RouteData::Peers(peers, vec![]));
+                    } else {
+                        data.push(RouteData::Peers(vec![], vec![]));
                     }
-                    data.push(RouteData::Peers(peers, vec![]));
                 }
                 DecodeData::Message(private_key_pem, passphrase) => {
                     let uid_size = message[size] as usize;
@@ -90,15 +94,17 @@ impl Encoder for RouteData {
                 data.append(&mut public_key.clone());
             }
             RouteData::Peers(peers, public_key_pem) => {
-                let mut list = Vec::new();
-                for peer in peers {
-                    let peer_string = peer.uid.clone() + "|" + peer.addr.to_string().as_str();
-                    list.append(&mut peer_string.as_bytes().to_vec());
-                    list.append(&mut ",".as_bytes().to_vec());
+                if !peers.is_empty() {
+                    let mut list = Vec::new();
+                    for peer in peers {
+                        let peer_string = peer.uid.clone() + "|" + peer.addr.to_string().as_str();
+                        list.append(&mut peer_string.as_bytes().to_vec());
+                        list.append(&mut ",".as_bytes().to_vec());
+                    }
+                    let mut encrypt_peers = encrypt(public_key_pem, list.clone());
+                    data.append(&mut list.len().to_ne_bytes().to_vec());
+                    data.append(&mut encrypt_peers);
                 }
-                let mut encrypt_peers = encrypt(public_key_pem, list.clone());
-                data.append(&mut list.len().to_ne_bytes().to_vec());
-                data.append(&mut encrypt_peers);
             }
             RouteData::Message(message, public_key_pem) => {
                 data.push(message.uid.len() as u8);
