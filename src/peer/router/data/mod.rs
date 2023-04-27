@@ -1,6 +1,6 @@
 use crate::peer::event::common::{decrypt, encrypt, get_size_from_ne_bytes};
 use crate::peer::message::PeerMessage;
-use crate::peer::RemotePeer;
+use crate::peer::SimplePeer;
 
 pub(crate) trait Encoder {
     fn encode(&self) -> Vec<u8>;
@@ -20,7 +20,7 @@ pub(crate) enum DecodeData {
 pub(crate) enum RouteData {
     Uid(String),
     PublicKey(Vec<u8>),
-    Peers(Vec<RemotePeer>, Vec<u8>),
+    Peers(Vec<SimplePeer>, Vec<u8>),
     Message(PeerMessage, Vec<u8>),
 }
 
@@ -55,10 +55,9 @@ impl Decoder for RouteData {
                         for peer in peers_data {
                             let data = peer.split("|").collect::<Vec<&str>>();
                             if data.len() >= 2 {
-                                peers.push(RemotePeer {
+                                peers.push(SimplePeer {
                                     uid: data.get(0).expect("Uid not found").to_string(),
                                     addr: data.get(1).expect("Address not found").to_string().parse().expect("Unable to parse socket address"),
-                                    public_key_pem: None,
                                 })
                             }
                         }

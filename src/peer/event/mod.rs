@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::time::SystemTime;
 
 use crate::peer::event::common::{Merge, Parser, Split};
@@ -19,6 +20,13 @@ pub struct PeerEvent {
     pub code: u8,
     /// Content message of the peer connecting.
     pub message: Vec<u8>,
+}
+
+pub(crate) struct ResponseEvent {
+    /// Response.
+    pub(crate) peer_event: PeerEvent,
+    /// Recipient of the response.
+    pub(crate) address: SocketAddr,
 }
 
 // IMPL

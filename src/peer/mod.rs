@@ -39,13 +39,20 @@ pub trait Exchange {
 
 // STRUCT
 
+pub struct SimplePeer {
+    /// Uid.
+    uid: String,
+    /// Address of the peer.
+    addr: SocketAddr,
+}
+
 pub struct RemotePeer {
     /// Uid.
     uid: String,
     /// Address of the peer.
     addr: SocketAddr,
     /// Public key for encrypt messages.
-    public_key_pem: Option<Vec<u8>>,
+    public_key_pem: Vec<u8>,
 }
 
 pub struct Peer {
@@ -69,13 +76,22 @@ pub struct Peer {
 
 impl Debug for RemotePeer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} - {}", self.uid.clone(), self.addr)
+        write!(f, "{} - {}", self.uid, self.addr)
     }
 }
 
 impl RemotePeer {
     fn exists(list: &MutexGuard<HashMap<String, RemotePeer>>, uid: &String) -> bool {
         list.get(uid).is_some()
+    }
+}
+
+impl Clone for SimplePeer {
+    fn clone(&self) -> Self {
+        SimplePeer {
+            uid: self.uid.clone(),
+            addr: self.addr.clone(),
+        }
     }
 }
 

@@ -16,6 +16,7 @@ use crate::server::Event;
 
 pub(crate) mod event;
 pub(crate) mod data;
+mod tests;
 
 // STRUCT
 
@@ -59,17 +60,17 @@ impl Router {
     pub(crate) fn route(&mut self, e: &Event, socket: &UdpSocket) {
         let peer_event = self.parse_complete_event(e);
         let event_uid = peer_event.uid.clone();
-        Logger::info(format!("[{}] \x1b[33mOpen\x1b[0m peer event : \x1b[33m{}\x1b[0m from \x1b[33m{}\x1b[0m", self, event_uid, e.sender));
+        Logger::info(format!("[{}] \x1b[33mReceive\x1b[0m peer event : \x1b[33m{}\x1b[0m from \x1b[33m{}\x1b[0m", self, event_uid, e.sender));
         if peer_event.is_complete() {
             let router_event = RouterEvent::find_by_code(peer_event.code);
-            Logger::info(format!("[{}] Router event : {}", self.peer_uid, router_event));
+            Logger::info(format!("[{}] Router event : {}", self, router_event));
             if let Some(responses_peer_event) = router_event.responses_event(peer_event, e.sender, self) {
                 for response in responses_peer_event {
-                    Logger::info(format!("[{}] \x1b[34mResponse\x1b[0m peer event : \x1b[33m{}\x1b[0m to \x1b[33m{}\x1b[0m", self, response.uid, e.sender));
-                    send_with_socket(socket, response, &e.sender);
+                    Logger::info(format!("[{}] \x1b[34mSend\x1b[0m peer event : \x1b[33m{}\x1b[0m to \x1b[33m{}\x1b[0m", self, response.peer_event.uid, e.sender));
+                    send_with_socket(socket, response.peer_event, &response.address);
                 }
             }
-            Logger::info(format!("[{}] \x1b[33mClose\x1b[0m peer event : \x1b[33m{}\x1b[0m", self, event_uid));
+            Logger::info(format!("[{}] \x1b[33mEnd\x1b[0m peer event : \x1b[33m{}\x1b[0m", self, event_uid));
         } else {
             Logger::info(format!("[{}] Peer event not completed : \x1b[33m{}\x1b[0m", self, event_uid));
         }
@@ -91,6 +92,6 @@ impl Router {
 impl Display for Router {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let peers = self.shared_peers.lock().unwrap();
-        write!(f, "{} ({:?})", self.peer_uid, peers)
+        write!(f, "{} {:?}", self.peer_uid, peers.keys())
     }
 }
