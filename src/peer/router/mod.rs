@@ -60,19 +60,18 @@ impl Router {
     pub(crate) fn route(&mut self, e: &Event, socket: &UdpSocket) {
         let peer_event = self.parse_complete_event(e);
         let event_uid = peer_event.uid.clone();
-        Logger::info(format!("[{}] \x1b[33mReceive\x1b[0m peer event : \x1b[33m{}\x1b[0m from \x1b[33m{}\x1b[0m", self, event_uid, e.sender));
         if peer_event.is_complete() {
             let router_event = RouterEvent::find_by_code(peer_event.code);
-            Logger::info(format!("[{}] Router event : {}", self, router_event));
+            Logger::info(format!("[{}] \x1b[33mReceive\x1b[0m \x1b[35m{}\x1b[0m event (\x1b[33m{}\x1b[0m) from \x1b[33m{}\x1b[0m", self, router_event, event_uid, e.sender));
             if let Some(responses_peer_event) = router_event.responses_event(peer_event, e.sender, self) {
                 for response in responses_peer_event {
-                    Logger::info(format!("[{}] \x1b[34mSend\x1b[0m peer event : \x1b[33m{}\x1b[0m to \x1b[33m{}\x1b[0m", self, response.peer_event.uid, e.sender));
+                    let res_router_event = RouterEvent::find_by_code(response.peer_event.code);
+                    Logger::info(format!("[{}] \x1b[34mSend\x1b[0m \x1b[35m{}\x1b[0m event (\x1b[33m{}\x1b[0m) to \x1b[33m{}\x1b[0m", self, res_router_event, response.peer_event.uid, response.address));
                     send_with_socket(socket, response.peer_event, &response.address);
                 }
             }
-            Logger::info(format!("[{}] \x1b[33mEnd\x1b[0m peer event : \x1b[33m{}\x1b[0m", self, event_uid));
         } else {
-            Logger::info(format!("[{}] Peer event not completed : \x1b[33m{}\x1b[0m", self, event_uid));
+            Logger::info(format!("[{}] event not completed : \x1b[33m{}\x1b[0m", self, event_uid));
         }
     }
 

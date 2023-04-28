@@ -36,12 +36,18 @@ struct PeerMessageData {
     sender: String,
 }
 
+#[derive(Debug)]
+struct SimplePeerData {
+    name: String,
+    addr: SocketAddr,
+}
+
 fn log(message: String) {
     println!("\x1b[44m\x1b[36m[TEST]\x1b[0m {}", message);
 }
 
 impl PeerData {
-    fn new(name: String, port: u16, connect: Option<SocketAddr>) -> PeerData {
+    fn new(name: String, port: u16, connect: Option<SimplePeerData>) -> PeerData {
         let mut peer = Peer::new(port, Some(name));
         let peer_uid = peer.uid.clone();
         let addr = peer.addr();
@@ -65,8 +71,8 @@ impl PeerData {
             shared_on_peer_disconnected.lock().unwrap().push(u.clone());
         });
         if let Some(dispatcher) = connect {
-            log(format!("Connect {} with {}", peer.uid, dispatcher));
-            peer.connect(&dispatcher);
+            log(format!("Connect {} with {}", peer.uid, dispatcher.name));
+            peer.connect(&dispatcher.addr);
         } else {
             log(format!("Start {}", peer.uid));
             peer.open();
@@ -224,7 +230,10 @@ impl PeersWorld {
         let addr;
         if let Some(dispatcher_name) = connect {
             let peer_data = self.find(&dispatcher_name);
-            addr = Some(peer_data.addr);
+            addr = Some(SimplePeerData {
+                name: dispatcher_name,
+                addr: peer_data.addr,
+            });
         } else {
             addr = None;
         }

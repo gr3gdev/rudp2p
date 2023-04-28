@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 
 use crate::logger::Logger;
-use crate::peer::{RemotePeer, SimplePeer};
 use crate::peer::event::{PeerEvent, ResponseEvent};
+use crate::peer::RemotePeer;
 use crate::peer::router::data::{DecodeData, Decoder, Encoder, RouteData};
 use crate::peer::router::Router;
 
@@ -64,11 +64,7 @@ impl RouterEvent {
         let RouteData::PublicKey(public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
         if !RemotePeer::exists(&peers, &uid) {
             Logger::info(format!("[{}] New peer : {}", router.peer_uid, uid));
-            peers.insert(uid.clone(), RemotePeer {
-                uid: uid.clone(),
-                addr: remote_addr,
-                public_key_pem: public_key_pem.clone(),
-            });
+            peers.insert(uid.clone(), RemotePeer::new(uid.clone(), remote_addr, public_key_pem.clone()));
         }
         if let Some(ref mut connected) = *guard_connected.borrow_mut() {
             connected(&uid.clone());
@@ -91,7 +87,6 @@ impl RouterEvent {
 
 impl RouteEvent for RouterEvent {
     fn responses_event(&self, peer_event: PeerEvent, remote_addr: SocketAddr, router: &Router) -> Option<Vec<ResponseEvent>> {
-        Logger::info(format!("[{}] Generate response for {} ...", router, self));
         let message = peer_event.message;
         match self {
             RouterEvent::Disconnecting => {
@@ -112,10 +107,7 @@ impl RouteEvent for RouterEvent {
                 ]);
                 let mut simple_peers = Vec::new();
                 for p in router.shared_peers.lock().unwrap().values() {
-                    simple_peers.push(SimplePeer {
-                        uid: p.uid.clone(),
-                        addr: p.addr,
-                    })
+                    simple_peers.push(p.simple_peer.clone())
                 }
                 let RouteData::PublicKey(remote_public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
                 let connected_event = RouterEvent::Connected.new_event(vec![
@@ -136,14 +128,14 @@ impl RouteEvent for RouterEvent {
                     DecodeData::Peers(router.private_key_pem.clone(), router.passphrase.to_string()),
                 ]);
                 Self::add_new_remote_peer(remote_addr, router, &data);
-                let RouteData::Peers(remote_peers, remote_public_key) = &data[2] else { panic!("Peers not found !") };
+                let RouteData::Peers(remote_peers, _) = &data[2] else { panic!("Peers not found !") };
                 if !remote_peers.is_empty() {
                     // Share peers
                     let mut connecting_peers = Vec::new();
-                    for remote in remote_peers {
+                    for remote in remote_peers.iter().filter(|r| !router.shared_peers.lock().unwrap().contains_key(r.uid.as_str())) {
                         let connecting_event = RouterEvent::Connecting.new_event(vec![
-                            RouteData::Uid(remote.uid.clone()),
-                            RouteData::PublicKey(remote_public_key.clone()),
+                            RouteData::Uid(router.peer_uid.clone()),
+                            RouteData::PublicKey(router.public_key_pem.clone()),
                         ]);
                         connecting_peers.push(ResponseEvent {
                             peer_event: connecting_event,

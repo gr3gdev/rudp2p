@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::MutexGuard;
 use std::time::Instant;
@@ -39,18 +39,16 @@ pub trait Exchange {
 
 // STRUCT
 
-pub struct SimplePeer {
+pub(crate) struct SimplePeer {
     /// Uid.
     uid: String,
     /// Address of the peer.
     addr: SocketAddr,
 }
 
-pub struct RemotePeer {
-    /// Uid.
-    uid: String,
-    /// Address of the peer.
-    addr: SocketAddr,
+pub(crate) struct RemotePeer {
+    /// Data of peer.
+    simple_peer: SimplePeer,
     /// Public key for encrypt messages.
     public_key_pem: Vec<u8>,
 }
@@ -74,9 +72,15 @@ pub struct Peer {
 
 // IMPL
 
-impl Debug for RemotePeer {
+impl Display for SimplePeer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} - {}", self.uid, self.addr)
+    }
+}
+
+impl Debug for RemotePeer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.simple_peer)
     }
 }
 
@@ -95,12 +99,29 @@ impl Clone for SimplePeer {
     }
 }
 
+impl SimplePeer {
+    fn new(uid: String, addr: SocketAddr) -> SimplePeer {
+        SimplePeer {
+            uid,
+            addr,
+        }
+    }
+}
+
 impl Clone for RemotePeer {
     fn clone(&self) -> Self {
         RemotePeer {
-            uid: self.uid.clone(),
-            addr: self.addr.clone(),
+            simple_peer: self.simple_peer.clone(),
             public_key_pem: self.public_key_pem.clone(),
+        }
+    }
+}
+
+impl RemotePeer {
+    fn new(uid: String, addr: SocketAddr, public_key_pem: Vec<u8>) -> RemotePeer {
+        RemotePeer {
+            simple_peer: SimplePeer::new(uid, addr),
+            public_key_pem,
         }
     }
 }
@@ -132,7 +153,7 @@ impl Server<Peer> for Peer {
         for peer in peers.values() {
             self.send(RouterEvent::Disconnecting.new_event(vec![
                 RouteData::Uid(self.uid.clone())
-            ]), &peer.addr);
+            ]), &peer.simple_peer.addr);
         }
         self.server.stop();
     }
@@ -204,7 +225,7 @@ impl Peer {
     }
 
     fn send_to_remote_peer(&self, message: PeerMessage, remote_peer: &RemotePeer) {
-        let addr = remote_peer.addr;
+        let addr = remote_peer.simple_peer.addr;
         if addr != self.addr() {
             let peer_event = RouterEvent::Message.new_event(vec![
                 RouteData::Uid(self.uid.clone()),

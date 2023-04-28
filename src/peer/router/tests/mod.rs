@@ -91,7 +91,7 @@ fn init_router(uid: &str,
     let public_key_pem = rsa.public_key_to_pem().unwrap();
     let mut map_peers = HashMap::new();
     for p in peers {
-        map_peers.insert(p.uid.clone(), p.clone());
+        map_peers.insert(p.simple_peer.uid.clone(), p.clone());
     }
     Router {
         peer_uid: uid.to_string(),
