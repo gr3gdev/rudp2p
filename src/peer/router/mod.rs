@@ -30,6 +30,8 @@ pub(crate) struct Router {
     pub(crate) shared_connected: Arc<Mutex<RefCell<Option<Box<dyn FnMut(&String) -> () + Send + Sync>>>>>,
     pub(crate) shared_disconnected: Arc<Mutex<RefCell<Option<Box<dyn FnMut(&String) -> () + Send + Sync>>>>>,
     complete_event: HashMap<String, Vec<PeerEvent>>,
+    friendly_peers: Arc<Mutex<Vec<String>>>,
+    blocked_peers: Arc<Mutex<Vec<String>>>,
 }
 
 // IMPL
@@ -54,6 +56,8 @@ impl Router {
             shared_connected: peer.on_peer_connected.shared(),
             shared_disconnected: peer.on_peer_disconnected.shared(),
             complete_event: HashMap::new(),
+            friendly_peers: peer.friendly_peers.clone(),
+            blocked_peers: peer.blocked_peers.clone(),
         }
     }
 

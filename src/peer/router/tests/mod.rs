@@ -85,7 +85,7 @@ fn init_router(uid: &str,
                on_message: Option<Box<dyn FnMut(&PeerMessage, &String) -> () + Send + Sync>>,
                on_connected: Option<Box<dyn FnMut(&String) -> () + Send + Sync>>,
                on_disconnected: Option<Box<dyn FnMut(&String) -> () + Send + Sync>>) -> Router {
-    let rsa = Rsa::generate(1024).unwrap();
+    let rsa = Rsa::generate(2048).unwrap();
     let passphrase = "P@ssW0rd!";
     let private_key_pem = rsa.private_key_to_pem_passphrase(Cipher::aes_256_cbc(), passphrase.as_bytes()).unwrap();
     let public_key_pem = rsa.public_key_to_pem().unwrap();
@@ -103,6 +103,8 @@ fn init_router(uid: &str,
         shared_connected: Arc::new(Mutex::new(RefCell::new(on_connected))),
         shared_disconnected: Arc::new(Mutex::new(RefCell::new(on_disconnected))),
         complete_event: Default::default(),
+        friendly_peers: Arc::new(Mutex::new(vec![])),
+        blocked_peers: Arc::new(Mutex::new(vec![])),
     }
 }
 
@@ -129,13 +131,11 @@ fn test_connecting_responses_event() {
         "P0",
         vec![
             RemotePeer {
-                uid: "P1".to_string(),
-                addr: "127.0.0.1:9001".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P1".to_string(), "127.0.0.1:9001".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p1_rsa.public_key_to_pem().unwrap(),
             },
             RemotePeer {
-                uid: "P2".to_string(),
-                addr: "127.0.0.1:9002".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P2".to_string(), "127.0.0.1:9002".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p2_rsa.public_key_to_pem().unwrap(),
             },
         ],
@@ -198,18 +198,15 @@ fn test_disconnecting_responses_event() {
         "P0",
         vec![
             RemotePeer {
-                uid: "P1".to_string(),
-                addr: "127.0.0.1:9001".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P1".to_string(), "127.0.0.1:9001".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p1_rsa.public_key_to_pem().unwrap(),
             },
             RemotePeer {
-                uid: "P2".to_string(),
-                addr: "127.0.0.1:9002".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P2".to_string(), "127.0.0.1:9002".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p2_rsa.public_key_to_pem().unwrap(),
             },
             RemotePeer {
-                uid: "P3".to_string(),
-                addr: "127.0.0.1:9003".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P3".to_string(), "127.0.0.1:9003".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p3_rsa.public_key_to_pem().unwrap(),
             },
         ],
@@ -241,18 +238,15 @@ fn test_disconnected_responses_event() {
         "P3",
         vec![
             RemotePeer {
-                uid: "P1".to_string(),
-                addr: "127.0.0.1:9001".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P1".to_string(), "127.0.0.1:9001".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p1_rsa.public_key_to_pem().unwrap(),
             },
             RemotePeer {
-                uid: "P2".to_string(),
-                addr: "127.0.0.1:9002".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P2".to_string(), "127.0.0.1:9002".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p2_rsa.public_key_to_pem().unwrap(),
             },
             RemotePeer {
-                uid: "P0".to_string(),
-                addr: "127.0.0.1:9000".parse::<SocketAddr>().unwrap(),
+                simple_peer: SimplePeer::new("P3".to_string(), "127.0.0.1:9003".parse::<SocketAddr>().unwrap()),
                 public_key_pem: p0_rsa.public_key_to_pem().unwrap(),
             },
         ],

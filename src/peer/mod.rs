@@ -17,13 +17,13 @@ use crate::peer::router::Router;
 use crate::server::{Event, Message, Server, ServerStatus, Udp};
 use crate::utils::{OptionalClosure, ThreadSafe};
 
-pub mod event;
+pub(crate) mod event;
 pub mod message;
-pub mod router;
+pub(crate) mod router;
 
 // TRAIT
 
-pub trait Dispatch {
+pub(crate) trait Dispatch {
     /// Manage the exchanges with peers.
     fn routing(&mut self);
 }
@@ -68,6 +68,10 @@ pub struct Peer {
     on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
     /// Keys for encryption.
     keys: Rsa<Private>,
+    /// Friendly peers.
+    friendly_peers: ThreadSafe<Vec<String>>,
+    /// Peers to block.
+    blocked_peers: ThreadSafe<Vec<String>>,
 }
 
 // IMPL
@@ -209,7 +213,19 @@ impl Peer {
             on_peer_connected: OptionalClosure::new(None),
             on_peer_disconnected: OptionalClosure::new(None),
             keys: Rsa::generate(1024).expect("Unable to generate keys"),
+            friendly_peers: ThreadSafe::new(Vec::new()),
+            blocked_peers: ThreadSafe::new(Vec::new()),
         }
+    }
+
+    pub fn add_friendly_peers(&self, mut peers: Vec<String>) {
+        let shared = self.friendly_peers.clone();
+        shared.lock().unwrap().append(&mut peers);
+    }
+
+    pub fn block_peers(&self, mut peers: Vec<String>) {
+        let shared = self.blocked_peers.clone();
+        shared.lock().unwrap().append(&mut peers);
     }
 
     pub fn set_on_message_received<F>(&mut self, on_message_received: F) where F: FnMut(&PeerMessage, &String) -> () + Send + Sync + 'static {

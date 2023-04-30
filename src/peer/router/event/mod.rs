@@ -61,14 +61,16 @@ impl RouterEvent {
         let guard_connected = router.shared_connected.lock().expect("Unable to get shared connected");
         let mut peers = router.shared_peers.lock().expect("Unable to get shared peers");
         let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
-        let RouteData::PublicKey(public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
-        if !RemotePeer::exists(&peers, &uid) {
-            Logger::info(format!("[{}] New peer : {}", router.peer_uid, uid));
-            peers.insert(uid.clone(), RemotePeer::new(uid.clone(), remote_addr, public_key_pem.clone()));
+        if Self::is_authorized(router, uid) {
+            let RouteData::PublicKey(public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
+            if !RemotePeer::exists(&peers, &uid) {
+                Logger::info(format!("[{}] New peer : {}", router.peer_uid, uid));
+                peers.insert(uid.clone(), RemotePeer::new(uid.clone(), remote_addr, public_key_pem.clone()));
+            }
+            if let Some(ref mut connected) = *guard_connected.borrow_mut() {
+                connected(&uid.clone());
+            };
         }
-        if let Some(ref mut connected) = *guard_connected.borrow_mut() {
-            connected(&uid.clone());
-        };
     }
 
     fn remove_remote_peer(router: &Router, data: &Vec<RouteData>) {
@@ -82,6 +84,12 @@ impl RouterEvent {
         if let Some(ref mut disconnected) = *guard_disconnected.borrow_mut() {
             disconnected(&uid.clone());
         };
+    }
+
+    fn is_authorized(router: &Router, uid: &String) -> bool {
+        let friendly = router.friendly_peers.lock().unwrap();
+        let blocked = router.blocked_peers.lock().unwrap();
+        (friendly.is_empty() || friendly.contains(uid)) && (blocked.is_empty() || !blocked.contains(uid))
     }
 }
 
