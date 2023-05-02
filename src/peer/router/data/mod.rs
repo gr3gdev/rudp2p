@@ -33,7 +33,8 @@ impl Decoder for RouteData {
                 DecodeData::Uid => {
                     let uid_size = message[0] as usize;
                     let uid_data = &message[1..1 + uid_size];
-                    data.push(RouteData::Uid(String::from_utf8(uid_data.to_vec()).expect("Unable to decode UID")));
+                    let uid = String::from_utf8(uid_data.to_vec()).expect("Unable to decode UID");
+                    data.push(RouteData::Uid(uid));
                     size += 1 + uid_size;
                 }
                 DecodeData::PublicKey => {
@@ -109,7 +110,7 @@ impl Encoder for RouteData {
                 data.push(message.uid.len() as u8);
                 data.append(&mut message.uid.clone());
                 let mut encrypt_content = encrypt(public_key_pem, message.content.clone());
-                data.append(&mut encrypt_content.len().to_ne_bytes().to_vec());
+                data.append(&mut message.content.len().to_ne_bytes().to_vec());
                 data.append(&mut encrypt_content);
             }
         }

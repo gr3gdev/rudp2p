@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 
-use crate::logger::Logger;
+use crate::{error, info};
 use crate::peer::event::{PeerEvent, ResponseEvent};
 use crate::peer::RemotePeer;
 use crate::peer::router::data::{DecodeData, Decoder, Encoder, RouteData};
@@ -27,7 +27,7 @@ impl RouterEvent {
             2 => RouterEvent::Connected,
             3 => RouterEvent::Message,
             4 => RouterEvent::Disconnected,
-            _ => panic!("Event not found !")
+            _ => error!("Event not found !")
         }
     }
 
@@ -60,11 +60,11 @@ impl RouterEvent {
     fn add_new_remote_peer(remote_addr: SocketAddr, router: &Router, data: &Vec<RouteData>) {
         let guard_connected = router.shared_connected.lock().expect("Unable to get shared connected");
         let mut peers = router.shared_peers.lock().expect("Unable to get shared peers");
-        let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
+        let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
         if Self::is_authorized(router, uid) {
-            let RouteData::PublicKey(public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
+            let RouteData::PublicKey(public_key_pem) = &data[1] else { error!("Public KEY not found !") };
             if !RemotePeer::exists(&peers, &uid) {
-                Logger::info(format!("[{}] New peer : {}", router.peer_uid, uid));
+                info!("[{}] New peer : {}", router.peer_uid, uid);
                 peers.insert(uid.clone(), RemotePeer::new(uid.clone(), remote_addr, public_key_pem.clone()));
             }
             if let Some(ref mut connected) = *guard_connected.borrow_mut() {
@@ -74,10 +74,10 @@ impl RouterEvent {
     }
 
     fn remove_remote_peer(router: &Router, data: &Vec<RouteData>) {
-        let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
+        let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
         let mut peers = router.shared_peers.lock().unwrap();
         if RemotePeer::exists(&peers, &uid) {
-            Logger::info(format!("[{}] Remove peer : {}", router.peer_uid, uid));
+            info!("[{}] Remove peer : {}", router.peer_uid, uid);
             peers.remove(&uid.clone());
         }
         let guard_disconnected = router.shared_disconnected.lock().unwrap();
@@ -117,7 +117,7 @@ impl RouteEvent for RouterEvent {
                 for p in router.shared_peers.lock().unwrap().values() {
                     simple_peers.push(p.simple_peer.clone())
                 }
-                let RouteData::PublicKey(remote_public_key_pem) = &data[1] else { panic!("Public KEY not found !") };
+                let RouteData::PublicKey(remote_public_key_pem) = &data[1] else { error!("Public KEY not found !") };
                 let connected_event = RouterEvent::Connected.new_event(vec![
                     RouteData::Uid(router.peer_uid.clone()),
                     RouteData::PublicKey(router.public_key_pem.clone()),
@@ -136,7 +136,7 @@ impl RouteEvent for RouterEvent {
                     DecodeData::Peers(router.private_key_pem.clone(), router.passphrase.to_string()),
                 ]);
                 Self::add_new_remote_peer(remote_addr, router, &data);
-                let RouteData::Peers(remote_peers, _) = &data[2] else { panic!("Peers not found !") };
+                let RouteData::Peers(remote_peers, _) = &data[2] else { error!("Peers not found !") };
                 if !remote_peers.is_empty() {
                     // Share peers
                     let mut connecting_peers = Vec::new();
@@ -161,8 +161,8 @@ impl RouteEvent for RouterEvent {
                     DecodeData::Uid,
                     DecodeData::Message(router.private_key_pem.clone(), router.passphrase.to_string()),
                 ]);
-                let RouteData::Uid(uid) = &data[0] else { panic!("UID not found !") };
-                let RouteData::Message(message, _) = &data[1] else { panic!("Message not found !") };
+                let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
+                let RouteData::Message(message, _) = &data[1] else { error!("Message not found !") };
                 if let Some(ref mut message_received) = *guard_message.borrow_mut() {
                     message_received(message, &uid.clone());
                 }

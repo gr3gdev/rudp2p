@@ -100,8 +100,10 @@ impl Merge<PeerEvent> for PeerEvent {
     fn merge(data: &Vec<PeerEvent>) -> PeerEvent {
         let mut uid = None;
         let mut code = None;
+        let mut total = 0;
         let mut message = Vec::new();
         for event in data {
+            total = event.total;
             if uid.is_none() && code.is_none() {
                 uid = Some(event.uid.clone());
                 code = Some(event.code);
@@ -117,7 +119,7 @@ impl Merge<PeerEvent> for PeerEvent {
         PeerEvent {
             uid: uid.expect("UID not found"),
             start: 0,
-            total: message.len(),
+            total,
             code: code.expect("Code not found"),
             message,
         }
