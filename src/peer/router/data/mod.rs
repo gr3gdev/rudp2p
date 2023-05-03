@@ -68,12 +68,8 @@ impl Decoder for RouteData {
                     }
                 }
                 DecodeData::Message(private_key_pem, passphrase) => {
-                    let uid_size = message[size] as usize;
-                    let uid_data = &message[size + 1..size + 1 + uid_size];
-                    let real_size = get_size_from_ne_bytes(&message, size + 1 + uid_size);
-                    let mut content = decrypt(&private_key_pem, passphrase.as_str(), message[size + 9 + uid_size..message.len()].to_vec());
-                    content.truncate(real_size);
-                    data.push(RouteData::Message(PeerMessage::new(content, Some(uid_data.to_vec())), vec![]));
+                    let peer_message = PeerMessage::parse(message[size..message.len()].to_vec(), &private_key_pem, passphrase);
+                    data.push(RouteData::Message(peer_message, vec![]));
                 }
             }
         }
@@ -107,11 +103,7 @@ impl Encoder for RouteData {
                 }
             }
             RouteData::Message(message, public_key_pem) => {
-                data.push(message.uid.len() as u8);
-                data.append(&mut message.uid.clone());
-                let mut encrypt_content = encrypt(public_key_pem, message.content.clone());
-                data.append(&mut message.content.len().to_ne_bytes().to_vec());
-                data.append(&mut encrypt_content);
+                data.append(&mut message.encode(public_key_pem));
             }
         }
         data

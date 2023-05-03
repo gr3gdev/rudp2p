@@ -4,8 +4,8 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::MutexGuard;
 use std::time::Instant;
 
-use openssl::pkey::Private;
 use openssl::rsa::Rsa;
+use openssl::symm::Cipher;
 
 use event::PeerEvent;
 use message::PeerMessage;
@@ -66,8 +66,12 @@ pub struct Peer {
     on_peer_connected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
     /// Listener trigger when a peer is disconnected.
     on_peer_disconnected: OptionalClosure<dyn FnMut(&String) -> () + Send + Sync>,
-    /// Keys for encryption.
-    keys: Rsa<Private>,
+    /// Public key for encryption.
+    public_key_pem: Vec<u8>,
+    /// Private key for decryption.
+    private_key_pem: Vec<u8>,
+    /// Passphrase for decryption.
+    passphrase: &'static str,
     /// Friendly peers.
     friendly_peers: ThreadSafe<Vec<String>>,
     /// Peers to block.
@@ -187,7 +191,7 @@ impl Exchange for Peer {
         self.start();
         self.server.send(RouterEvent::Connecting.new_event(vec![
             RouteData::Uid(self.uid.clone()),
-            RouteData::PublicKey(self.keys.public_key_to_pem().expect("Unable to get pem from public key")),
+            RouteData::PublicKey(self.public_key_pem.clone()),
         ]), addr);
     }
 }
@@ -205,6 +209,8 @@ impl ServerStatus for Peer {
 impl Peer {
     pub fn new(port: u16, uid: Option<String>) -> Peer {
         let uid = uid.or_else(|| Some(Instant::now().elapsed().as_millis().to_string())).unwrap();
+        let rsa = Rsa::generate(1024).expect("Unable to generate keys");
+        let passphrase = "P@ssword_temp";
         Peer {
             uid,
             server: Udp::new(port),
@@ -212,7 +218,9 @@ impl Peer {
             on_message_received: OptionalClosure::new(None),
             on_peer_connected: OptionalClosure::new(None),
             on_peer_disconnected: OptionalClosure::new(None),
-            keys: Rsa::generate(1024).expect("Unable to generate keys"),
+            public_key_pem: rsa.public_key_to_pem().expect("Unable to generate public key pem"),
+            private_key_pem: rsa.private_key_to_pem_passphrase(Cipher::aes_256_cbc(), passphrase.as_bytes()).expect("Unable to generate private key pem"),
+            passphrase,
             friendly_peers: ThreadSafe::new(Vec::new()),
             blocked_peers: ThreadSafe::new(Vec::new()),
         }
@@ -245,7 +253,7 @@ impl Peer {
         if addr != self.addr() {
             let peer_event = RouterEvent::Message.new_event(vec![
                 RouteData::Uid(self.uid.clone()),
-                RouteData::Message(message, self.keys.public_key_to_pem().expect("Unable to get pem from public key")),
+                RouteData::Message(message, remote_peer.public_key_pem.clone()),
             ]);
             self.send_with_server(peer_event, &addr);
         }

@@ -4,8 +4,6 @@ use std::fmt::{Display, Formatter};
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 
-use openssl::symm::Cipher;
-
 use crate::info;
 use crate::peer::{Peer, RemotePeer};
 use crate::peer::event::common::{Merge, Parser, send_with_socket};
@@ -38,19 +36,11 @@ pub(crate) struct Router {
 
 impl Router {
     pub(crate) fn new(peer: &Peer) -> Router {
-        let keys = peer.keys.clone();
-        let passphrase = "TODO_change_password";
-        let private_key_pem = keys.private_key_to_pem_passphrase(
-            Cipher::aes_256_cbc(),
-            passphrase.as_bytes(),
-        ).expect("Unable to generate private key pem");
-        let public_key_pem = keys.public_key_to_pem()
-            .expect("Unable to generate public key pem");
         Router {
             peer_uid: peer.uid.clone(),
-            passphrase,
-            private_key_pem,
-            public_key_pem,
+            passphrase: peer.passphrase,
+            private_key_pem: peer.private_key_pem.clone(),
+            public_key_pem: peer.public_key_pem.clone(),
             shared_peers: peer.peers.clone(),
             shared_message: peer.on_message_received.shared(),
             shared_connected: peer.on_peer_connected.shared(),
