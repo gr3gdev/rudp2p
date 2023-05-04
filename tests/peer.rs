@@ -1,8 +1,9 @@
 use std::{env, fs};
 use std::collections::HashMap;
+use std::fs::File;
 use std::net::SocketAddr;
 
-use cucumber::{gherkin::Step, given, then, when, World};
+use cucumber::{gherkin::Step, given, then, when, World, writer};
 use futures::future::LocalBoxFuture;
 use futures::FutureExt;
 
@@ -193,20 +194,21 @@ impl PeerData {
             }
         }
         let messages = messages_by_sender.get(uid).expect("Messages not found");
-        let message = PeerMessage::concat(&messages);
-        if event.contains("file:") {
-            let current_dir = env::current_dir().unwrap();
-            let mut path = current_dir.display().to_string();
-            path.push_str(event[5..].trim());
-            let mut out = current_dir.display().to_string();
-            out.push_str("/target/out.txt");
-            message.to_file(out.as_str());
-            let expected_data = read_file(path.as_str());
-            let actual_data = read_file(out.as_str());
-            fs::remove_file(out).expect("Unable to remove out.txt");
-            assert_eq!(expected_data, actual_data);
-        } else {
-            assert_eq!(event, message.to_string());
+        for message in messages {
+            if event.contains("file:") {
+                let current_dir = env::current_dir().unwrap();
+                let mut path = current_dir.display().to_string();
+                path.push_str(event[5..].trim());
+                let mut out = current_dir.display().to_string();
+                out.push_str("/target/out.txt");
+                message.to_file(out.as_str());
+                let expected_data = read_file(path.as_str());
+                let actual_data = read_file(out.as_str());
+                fs::remove_file(out).expect("Unable to remove out.txt");
+                assert_eq!(expected_data, actual_data);
+            } else {
+                assert_eq!(event, message.to_string());
+            }
         }
     }
 }
@@ -340,10 +342,19 @@ async fn receive_event(w: &mut PeersWorld, peer_name: String, step: &Step) {
     }
 }
 
+#[when(expr = "the peer {string} blocks the peer {string}")]
+async fn block_peer(w: &mut PeersWorld, peer_name: String, blocked_peer_name: String) {
+    let peer_data = w.find(&peer_name);
+    peer_data.peer.block_peers(vec![blocked_peer_name]);
+}
+
 fn main() {
+    let file = File::create("target/cucumber.json").expect("Unable to create cucumber.json");
+    let writer = writer::Json::new(file);
     futures::executor::block_on(PeersWorld::cucumber()
+        .with_writer(writer)
         .after(|_feature, _rule, _scenario, _ev, world| {
             world.unwrap().close()
         })
-        .run_and_exit("features"));
+        .run("features"));
 }

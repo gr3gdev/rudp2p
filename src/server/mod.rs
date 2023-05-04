@@ -5,8 +5,6 @@ use std::thread::JoinHandle;
 
 use crate::utils::OptionalClosure;
 
-mod tests;
-
 // CONSTANTS
 
 static END: &[u8] = "PL3AZE 5T0P".as_bytes();

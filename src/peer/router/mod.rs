@@ -14,7 +14,6 @@ use crate::server::Event;
 
 pub(crate) mod event;
 pub(crate) mod data;
-mod tests;
 
 // STRUCT
 

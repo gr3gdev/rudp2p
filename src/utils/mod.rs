@@ -10,7 +10,7 @@ use std::sync::{Arc, LockResult, Mutex, MutexGuard};
 
 // COMMON FUNCTIONS
 
-/// Read a file into Vec<u8> from a path.
+/// Read a file into Vec from a path.
 pub fn read_file(path: &str) -> Vec<u8> {
     let mut f = File::open(path).expect(format!("File not found : {}", path).as_str());
     let metadata = fs::metadata(&path).expect("Unable to read metadata");

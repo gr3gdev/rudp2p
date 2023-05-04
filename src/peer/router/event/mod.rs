@@ -2,8 +2,9 @@ use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 
 use crate::{error, info};
+use crate::peer::{RemotePeer, SimplePeer};
 use crate::peer::event::{PeerEvent, ResponseEvent};
-use crate::peer::RemotePeer;
+use crate::peer::message::PeerMessage;
 use crate::peer::router::data::{DecodeData, Decoder, Encoder, RouteData};
 use crate::peer::router::Router;
 
@@ -60,9 +61,9 @@ impl RouterEvent {
     fn add_new_remote_peer(remote_addr: SocketAddr, router: &Router, data: &Vec<RouteData>) {
         let guard_connected = router.shared_connected.lock().expect("Unable to get shared connected");
         let mut peers = router.shared_peers.lock().expect("Unable to get shared peers");
-        let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
+        let uid = Self::get_uid(data);
         if Self::is_authorized(router, uid) {
-            let RouteData::PublicKey(public_key_pem) = &data[1] else { error!("Public KEY not found !") };
+            let public_key_pem = Self::get_public_key_pem(data);
             if !RemotePeer::exists(&peers, &uid) {
                 info!("[{}] New peer : {}", router.peer_uid, uid);
                 peers.insert(uid.clone(), RemotePeer::new(uid.clone(), remote_addr, public_key_pem.clone()));
@@ -74,7 +75,7 @@ impl RouterEvent {
     }
 
     fn remove_remote_peer(router: &Router, data: &Vec<RouteData>) {
-        let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
+        let uid = Self::get_uid(data);
         let mut peers = router.shared_peers.lock().unwrap();
         if RemotePeer::exists(&peers, &uid) {
             info!("[{}] Remove peer : {}", router.peer_uid, uid);
@@ -90,6 +91,26 @@ impl RouterEvent {
         let friendly = router.friendly_peers.lock().unwrap();
         let blocked = router.blocked_peers.lock().unwrap();
         (friendly.is_empty() || friendly.contains(uid)) && (blocked.is_empty() || !blocked.contains(uid))
+    }
+
+    fn get_uid(data: &Vec<RouteData>) -> &String {
+        let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
+        uid
+    }
+
+    fn get_public_key_pem(data: &Vec<RouteData>) -> &Vec<u8> {
+        let RouteData::PublicKey(public_key_pem) = &data[1] else { error!("Public KEY not found !") };
+        public_key_pem
+    }
+
+    fn get_peers(data: &Vec<RouteData>) -> &Vec<SimplePeer> {
+        let RouteData::Peers(peers, _) = &data[2] else { error!("Peers not found !") };
+        peers
+    }
+
+    fn get_message(data: &Vec<RouteData>) -> &PeerMessage {
+        let RouteData::Message(message, _) = &data[1] else { error!("Message not found !") };
+        message
     }
 }
 
@@ -113,21 +134,26 @@ impl RouteEvent for RouterEvent {
                     DecodeData::Uid,
                     DecodeData::PublicKey,
                 ]);
-                let mut simple_peers = Vec::new();
-                for p in router.shared_peers.lock().unwrap().values() {
-                    simple_peers.push(p.simple_peer.clone())
+                let uid = Self::get_uid(&data);
+                if Self::is_authorized(router, uid) {
+                    let mut simple_peers = Vec::new();
+                    for p in router.shared_peers.lock().unwrap().values() {
+                        simple_peers.push(p.simple_peer.clone())
+                    }
+                    let remote_public_key_pem = Self::get_public_key_pem(&data);
+                    let connected_event = RouterEvent::Connected.new_event(vec![
+                        RouteData::Uid(router.peer_uid.clone()),
+                        RouteData::PublicKey(router.public_key_pem.clone()),
+                        RouteData::Peers(simple_peers, remote_public_key_pem.clone()),
+                    ]);
+                    Self::add_new_remote_peer(remote_addr, router, &data);
+                    Some(vec![ResponseEvent {
+                        peer_event: connected_event,
+                        address: remote_addr,
+                    }])
+                } else {
+                    None
                 }
-                let RouteData::PublicKey(remote_public_key_pem) = &data[1] else { error!("Public KEY not found !") };
-                let connected_event = RouterEvent::Connected.new_event(vec![
-                    RouteData::Uid(router.peer_uid.clone()),
-                    RouteData::PublicKey(router.public_key_pem.clone()),
-                    RouteData::Peers(simple_peers, remote_public_key_pem.clone()),
-                ]);
-                Self::add_new_remote_peer(remote_addr, router, &data);
-                Some(vec![ResponseEvent {
-                    peer_event: connected_event,
-                    address: remote_addr,
-                }])
             }
             RouterEvent::Connected => {
                 let data = RouteData::decode(message, vec![
@@ -136,7 +162,7 @@ impl RouteEvent for RouterEvent {
                     DecodeData::Peers(router.private_key_pem.clone(), router.passphrase.to_string()),
                 ]);
                 Self::add_new_remote_peer(remote_addr, router, &data);
-                let RouteData::Peers(remote_peers, _) = &data[2] else { error!("Peers not found !") };
+                let remote_peers = Self::get_peers(&data);
                 if !remote_peers.is_empty() {
                     // Share peers
                     let mut connecting_peers = Vec::new();
@@ -161,8 +187,8 @@ impl RouteEvent for RouterEvent {
                     DecodeData::Uid,
                     DecodeData::Message(router.private_key_pem.clone(), router.passphrase.to_string()),
                 ]);
-                let RouteData::Uid(uid) = &data[0] else { error!("UID not found !") };
-                let RouteData::Message(message, _) = &data[1] else { error!("Message not found !") };
+                let uid = Self::get_uid(&data);
+                let message = Self::get_message(&data);
                 if let Some(ref mut message_received) = *guard_message.borrow_mut() {
                     message_received(message, &uid.clone());
                 }

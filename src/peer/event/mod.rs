@@ -5,7 +5,6 @@ use crate::peer::event::common::{Merge, Parser, Split};
 use crate::server::Message;
 
 pub(crate) mod common;
-mod tests;
 
 // STRUCT
 

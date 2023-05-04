@@ -196,16 +196,6 @@ impl Exchange for Peer {
     }
 }
 
-impl ServerStatus for Peer {
-    fn alive(&self) -> bool {
-        self.server.alive()
-    }
-
-    fn addr(&self) -> SocketAddr {
-        self.server.addr()
-    }
-}
-
 impl Peer {
     pub fn new(port: u16, uid: Option<String>) -> Peer {
         let uid = uid.or_else(|| Some(Instant::now().elapsed().as_millis().to_string())).unwrap();
@@ -232,6 +222,18 @@ impl Peer {
     }
 
     pub fn block_peers(&self, mut peers: Vec<String>) {
+        let shared_authorized = self.friendly_peers.clone();
+        let mut guard = shared_authorized.lock().unwrap();
+        let shared_peers = self.peers.clone();
+        for uid in &peers {
+            // Remove friendly peer
+            if let Some(position) = guard.iter().position(|p| p.eq(uid)) {
+                guard.remove(position);
+            }
+            // Remove peer connected with
+            shared_peers.lock().unwrap().remove(uid.as_str());
+        }
+        // Add in black list
         let shared = self.blocked_peers.clone();
         shared.lock().unwrap().append(&mut peers);
     }
@@ -250,7 +252,7 @@ impl Peer {
 
     fn send_to_remote_peer(&self, message: PeerMessage, remote_peer: &RemotePeer) {
         let addr = remote_peer.simple_peer.addr;
-        if addr != self.addr() {
+        if addr != self.server.addr() {
             let peer_event = RouterEvent::Message.new_event(vec![
                 RouteData::Uid(self.uid.clone()),
                 RouteData::Message(message, remote_peer.public_key_pem.clone()),
@@ -271,6 +273,16 @@ impl Peer {
 
     pub fn close(&self) {
         self.stop();
+    }
+}
+
+impl ServerStatus for Peer {
+    fn alive(&self) -> bool {
+        self.server.alive()
+    }
+
+    fn addr(&self) -> SocketAddr {
+        self.server.addr()
     }
 }
 
