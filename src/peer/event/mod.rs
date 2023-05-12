@@ -1,158 +1,146 @@
 use std::net::SocketAddr;
+use std::time::SystemTime;
+
+use crate::peer::event::common::{Merge, Parser, Split};
 use crate::server::Message;
 
-// CONSTANTS
-
-pub static DISCONNECTING: u8 = 0;
-pub static CONNECTING: u8 = 1;
-pub static CONNECTED: u8 = 2;
-pub static MESSAGE: u8 = 3;
-pub static DISCONNECTED: u8 = 9;
-
-// COMMON FUNCTIONS
-
-fn init_with_data(uid: String, list: Vec<u8>) -> Vec<u8> {
-    let mut data = Vec::new();
-    let uid_size = uid.len() as u8;
-    data.push(uid_size);
-    for b in uid.as_bytes().to_vec() {
-        data.push(b);
-    }
-    if !list.is_empty() {
-        for b in list {
-            data.push(b);
-        }
-    }
-    data
-}
-
-// TRAIT
-
-pub trait AsBytes {
-    /// Convert struct to bytes u8.
-    fn as_bytes(&self) -> Vec<u8>;
-}
+pub(crate) mod common;
 
 // STRUCT
 
 pub struct PeerEvent {
-    /// Code of the peer event.
+    /// Unique ID.
+    pub(crate) uid: String,
+    /// Start of the byte array of the content message.
+    start: usize,
+    /// Size of the byte array of the content message.
+    total: usize,
+    /// Code of the peer connecting.
     pub code: u8,
-    /// Content message of the peer event.
+    /// Content message of the peer connecting.
     pub message: Vec<u8>,
 }
 
-pub struct PeerConnecting {
-    /// Uid of the peer that connects.
-    pub uid: String,
-    /// Whitelist of Uid with whom peer can communicate.
-    pub white_list: Vec<String>,
+pub(crate) struct ResponseEvent {
+    /// Response.
+    pub(crate) peer_event: PeerEvent,
+    /// Recipient of the response.
+    pub(crate) address: SocketAddr,
 }
 
 // IMPL
 
-impl AsBytes for PeerEvent {
-    fn as_bytes(&self) -> Vec<u8> {
-        let mut data: Vec<u8> = Vec::new();
-        data.push(self.code);
-        for m in self.message.clone() {
-            data.push(m);
+impl Parser<PeerEvent> for PeerEvent {
+    fn parse(data: &Vec<u8>) -> PeerEvent {
+        let uid_size = data[0] as usize;
+        let start = usize::from_ne_bytes([data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]]);
+        let total = usize::from_ne_bytes([data[9], data[10], data[11], data[12], data[13], data[14], data[15], data[16]]);
+        let uid = data[17..(17 + uid_size)].to_vec();
+        let code = data[17 + uid_size];
+        let content = data[(18 + uid_size)..data.len()].to_vec();
+        PeerEvent {
+            uid: String::from_utf8(uid).expect("Unable to read uid of connecting"),
+            start,
+            total,
+            code,
+            message: content,
         }
-        data
     }
 }
 
-impl PeerConnecting {
-    pub fn read_address(message: &Vec<u8>) -> SocketAddr {
-        let msg_address = String::from_utf8(message.clone()).unwrap();
-        let address: SocketAddr = msg_address.parse().expect("Unable to parse socket address");
-        address
-    }
-
-    pub fn read_white_list(message: &Vec<u8>) -> Vec<String> {
-        let white_list = String::from_utf8(message.clone()).unwrap();
-        println!("white_list : {}", white_list);
-        let mut list = Vec::new();
-        for uid in white_list.split(",") {
-            if !uid.is_empty() {
-                list.push(uid.to_string());
-            }
-        }
-        list
-    }
-}
-
-impl PeerEvent {
-    /// Event: connecting.
-    pub fn connecting(peer_connecting: PeerConnecting) -> PeerEvent {
-        let mut data = init_with_data(peer_connecting.uid, Vec::new());
-        for w in peer_connecting.white_list {
-            for b in w.as_bytes().to_vec() {
-                data.push(b);
-            }
-            for e in ",".as_bytes() {
-                data.push(e.clone());
-            }
-        }
+impl Clone for PeerEvent {
+    fn clone(&self) -> Self {
         PeerEvent {
-            code: CONNECTING,
-            message: data.clone(),
-        }
-    }
-
-    pub fn convert_to_peer_event(content: Vec<u8>) -> PeerEvent {
-        PeerEvent {
-            code: content[0],
-            message: content[1..content.len()].to_vec(),
-        }
-    }
-
-    pub fn read_uid(content: &Vec<u8>) -> String {
-        let uid_size = content[0] as usize;
-        let uid = content[1..(1 + uid_size)].to_vec();
-        String::from_utf8(uid).unwrap()
-    }
-
-    pub fn read_after_uid(content: &Vec<u8>) -> Vec<u8> {
-        let uid_size = content[0] as usize;
-        content[(1 + uid_size)..content.len()].to_vec()
-    }
-
-    /// Event: disconnecting.
-    pub fn disconnecting(uid: String) -> PeerEvent {
-        PeerEvent {
-            code: DISCONNECTING,
-            message: init_with_data(uid, Vec::new()),
-        }
-    }
-
-    /// Event: connected.
-    pub fn connected(uid: String, addr: SocketAddr) -> PeerEvent {
-        PeerEvent {
-            code: CONNECTED,
-            message: init_with_data(uid, addr.to_string().as_bytes().to_vec()),
-        }
-    }
-
-    /// Event: disconnected.
-    pub fn disconnected(uid: String, addr: SocketAddr) -> PeerEvent {
-        PeerEvent {
-            code: DISCONNECTED,
-            message: init_with_data(uid, addr.to_string().as_bytes().to_vec()),
-        }
-    }
-
-    /// Event: message.
-    pub fn message(uid: String, message: Vec<u8>) -> PeerEvent {
-        PeerEvent {
-            code: MESSAGE,
-            message: init_with_data(uid, message),
+            uid: self.uid.clone(),
+            start: self.start.clone(),
+            total: self.total.clone(),
+            code: self.code.clone(),
+            message: self.message.clone(),
         }
     }
 }
 
 impl Message for PeerEvent {
     fn content(&self) -> Vec<u8> {
-        self.as_bytes()
+        let mut data = Vec::new();
+        let mut uid_data = self.uid.as_bytes().to_vec();
+        data.push(uid_data.len() as u8);
+        data.append(&mut self.start.to_ne_bytes().to_vec());
+        data.append(&mut self.total.to_ne_bytes().to_vec());
+        data.append(&mut uid_data);
+        data.push(self.code);
+        data.append(&mut self.message.clone());
+        data
+    }
+}
+
+impl Split<PeerEvent> for PeerEvent {
+    fn split(data: PeerEvent, size: usize) -> Vec<PeerEvent> {
+        let mut list = Vec::new();
+        for i in (0..data.message.len()).step_by(size) {
+            let mut max = i + size;
+            if max > data.message.len() {
+                max = data.message.len();
+            }
+            let new_content = data.message[i..max].to_vec();
+            list.push(PeerEvent {
+                uid: data.uid.clone(),
+                start: i,
+                total: data.total,
+                code: data.code,
+                message: new_content,
+            })
+        }
+        list
+    }
+}
+
+impl Merge<PeerEvent> for PeerEvent {
+    fn merge(data: &Vec<PeerEvent>) -> PeerEvent {
+        let mut uid = None;
+        let mut code = None;
+        let mut total = 0;
+        let mut message = Vec::new();
+        for event in data {
+            total = event.total;
+            if uid.is_none() && code.is_none() {
+                uid = Some(event.uid.clone());
+                code = Some(event.code);
+            }
+            if uid.is_some() && code.is_some() && uid.eq(&Some(event.uid.clone())) && code.eq(&Some(event.code)) {
+                if message.len() < event.total {
+                    for c in event.message.clone() {
+                        message.push(c);
+                    }
+                }
+            }
+        }
+        PeerEvent {
+            uid: uid.expect("UID not found"),
+            start: 0,
+            total,
+            code: code.expect("Code not found"),
+            message,
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.total > 0 && self.message.len() > 0 && self.total == self.message.len()
+    }
+}
+
+impl PeerEvent {
+    pub(crate) fn new(code: u8, data: Vec<u8>) -> PeerEvent {
+        PeerEvent {
+            uid: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .to_string(),
+            start: 0,
+            total: data.len(),
+            code,
+            message: data,
+        }
     }
 }

@@ -2,13 +2,16 @@ use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::time::SystemTime;
 
-use crate::peer::event::PeerEvent;
+use crate::peer::event::common::{decrypt, encrypt, get_size_from_ne_bytes};
 use crate::utils::{read_file, write_file};
 
 // STRUCT
 
+/// # PeerMessage
+///
+/// A structure for send and receive messages.
 pub struct PeerMessage {
-    /// UID of the message.
+    /// Unique identifier of the message.
     pub uid: Vec<u8>,
     /// Start of the byte array of the content message.
     start: usize,
@@ -32,85 +35,46 @@ impl Clone for PeerMessage {
 }
 
 impl PeerMessage {
+    /// Generate a PeerMessage from text.
     pub fn from_text(text: &str) -> PeerMessage {
-        PeerMessage::new(Vec::from(text))
+        PeerMessage::new(Vec::from(text), None)
     }
 
+    /// Generate a PeerMessage from file.
     pub fn from_file(path: &str) -> PeerMessage {
-        PeerMessage::new(read_file(path))
+        PeerMessage::new(read_file(path), None)
     }
 
-    fn new(content: Vec<u8>) -> PeerMessage {
+    pub(crate) fn new(content: Vec<u8>, uid: Option<Vec<u8>>) -> PeerMessage {
         PeerMessage {
-            uid: Vec::from(SystemTime::now()
+            uid: uid.or_else(|| Some(Vec::from(SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap().as_millis()
-                .to_string()),
+                .to_string()))).unwrap(),
             start: 0,
             total: content.len(),
             content,
         }
     }
 
-    pub fn concat(messages: &Vec<PeerMessage>) -> PeerMessage {
-        let mut uid = Vec::new();
-        let mut content = Vec::new();
-        for message in messages {
-            uid = message.uid.clone();
-            if content.len() < message.total {
-                for c in message.content.clone() {
-                    content.push(c);
-                }
-            }
-        }
-        PeerMessage {
-            uid,
-            start: 0,
-            total: content.len(),
-            content,
-        }
+    pub(crate) fn encode(&self, public_key_pem: &Vec<u8>) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.push(self.uid.len() as u8);
+        data.append(&mut self.start.to_ne_bytes().to_vec());
+        data.append(&mut self.total.to_ne_bytes().to_vec());
+        data.append(&mut self.uid.clone());
+        data.append(&mut self.content.clone());
+        let real_size = data.len();
+        let mut data_with_size = Vec::new();
+        data_with_size.append(&mut real_size.to_ne_bytes().to_vec());
+        data_with_size.append(&mut encrypt(public_key_pem, data));
+        data_with_size
     }
 
-    pub fn split(message: PeerMessage, size: usize) -> Vec<PeerMessage> {
-        let mut messages = Vec::new();
-        let total = message.content.len();
-        for i1 in (0..message.content.len()).step_by(size) {
-            let mut new_content = Vec::new();
-            for i2 in i1..(i1 + size) {
-                if let Some(data) = message.content.get(i2) {
-                    new_content.push(*data);
-                }
-            }
-            messages.push(PeerMessage {
-                uid: message.uid.clone(),
-                start: i1,
-                total,
-                content: new_content,
-            })
-        }
-        messages
-    }
-
-    pub fn to_event(&self, uid: &String) -> PeerEvent {
-        let mut data: Vec<u8> = Vec::new();
-        let size = self.uid.len() as u8;
-        data.push(size);
-        for ne in self.start.to_ne_bytes() {
-            data.push(ne);
-        }
-        for ne in self.total.to_ne_bytes() {
-            data.push(ne);
-        }
-        for d in self.uid.clone() {
-            data.push(d);
-        }
-        for c in self.content.clone() {
-            data.push(c);
-        }
-        PeerEvent::message(uid.clone(), data)
-    }
-
-    pub fn parse(data: &Vec<u8>) -> PeerMessage {
+    pub(crate) fn parse(encrypted_data: Vec<u8>, private_key_pem: &Vec<u8>, passphrase: String) -> PeerMessage {
+        let real_size = get_size_from_ne_bytes(&encrypted_data, 0);
+        let mut data = decrypt(private_key_pem, passphrase.as_str(), encrypted_data[8..encrypted_data.len()].to_vec());
+        data.truncate(real_size);
         let uid_size = data[0] as usize;
         let start = usize::from_ne_bytes([data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]]);
         let total = usize::from_ne_bytes([data[9], data[10], data[11], data[12], data[13], data[14], data[15], data[16]]);
@@ -124,14 +88,17 @@ impl PeerMessage {
         }
     }
 
+    /// Get the UID of the PeerMessage.
     pub fn uid(message: &PeerMessage) -> String {
         String::from_utf8(message.uid.clone()).unwrap()
     }
 
+    /// Convert the PeerMessage to text.
     pub fn to_string(&self) -> String {
         String::from_utf8(self.content.clone()).unwrap()
     }
 
+    /// Convert the PeerMessage to file.
     pub fn to_file(&self, path: &str) -> File {
         write_file(self.content.as_slice(), path)
     }

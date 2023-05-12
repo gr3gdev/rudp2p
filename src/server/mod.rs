@@ -18,16 +18,16 @@ pub trait ServerStatus {
     fn addr(&self) -> SocketAddr;
 }
 
-pub trait Message {
+pub(crate) trait Message {
     /// Message exchanged on the server.
     fn content(&self) -> Vec<u8>;
 }
 
-pub trait Server<T> {
+pub(crate) trait Server<T> {
     /// Start the server.
     fn start(&mut self) -> ();
     /// Stop the server.
-    fn close(&self) -> ();
+    fn stop(&self) -> ();
     /// Send a `msg` to the server with address `addr`.
     fn send<M>(&self, msg: M, addr: &SocketAddr) where M: Message;
 }
@@ -36,20 +36,16 @@ pub trait Server<T> {
 
 struct StopMessage {}
 
-pub struct Event {
-    /// Content of the event.
-    pub content: Vec<u8>,
-    /// Who has triggered this event.
-    pub sender: SocketAddr,
+pub(crate) struct Event {
+    /// Content of the connecting.
+    pub(crate) content: Vec<u8>,
+    /// Who has triggered this connecting.
+    pub(crate) sender: SocketAddr,
 }
 
-pub struct Udp {
+pub(crate) struct Udp {
     /// UdpSocket used by the Udp server.
     socket: UdpSocket,
-    /// Observer : trigger when server is started.
-    on_started: OptionalClosure<dyn FnMut(&SocketAddr) + Send + Sync>,
-    /// Observer : trigger when server is stopped.
-    on_stopped: OptionalClosure<dyn FnMut(&SocketAddr) + Send + Sync>,
     /// Observer : trigger when server has received a message.
     on_received: OptionalClosure<dyn FnMut(&Event, &UdpSocket) + Send + Sync>,
     /// Thread job.
@@ -76,16 +72,10 @@ impl Clone for Event {
 impl Server<Udp> for Udp {
     fn start(&mut self) -> () {
         let socket = self.socket.try_clone().unwrap();
-        let socket_addr = socket.local_addr().unwrap();
         let shared_observer = self.on_received.shared();
-        let shared_started = self.on_started.shared();
-        let shared_stopped = self.on_stopped.shared();
         let mut buf = [0; 2048];
         // Démarrage du thread pour la réception des données
         let job = thread::spawn(move || {
-            if let Some(ref mut on_started) = *shared_started.lock().unwrap().borrow_mut() {
-                on_started(&socket_addr);
-            }
             loop {
                 let guard = shared_observer.lock().unwrap();
                 match socket.recv_from(&mut buf) {
@@ -107,14 +97,11 @@ impl Server<Udp> for Udp {
                     Err(e) => eprintln!("encountered IO error: {e}"),
                 }
             }
-            if let Some(ref mut on_stopped) = *shared_stopped.lock().unwrap().borrow_mut() {
-                on_stopped(&socket_addr);
-            }
         });
         self.job = Some(job);
     }
 
-    fn close(&self) -> () {
+    fn stop(&self) -> () {
         let address = self.socket.local_addr().unwrap();
         self.send(StopMessage {}, &address);
     }
@@ -152,23 +139,13 @@ impl Udp {
         socket.set_nonblocking(true).unwrap();
         Udp {
             socket,
-            on_started: OptionalClosure::new(None),
-            on_stopped: OptionalClosure::new(None),
             on_received: OptionalClosure::new(None),
             job: None,
         }
     }
 
-    pub fn set_on_received<F>(&mut self, observer: F) where F: FnMut(&Event, &UdpSocket) + Send + Sync + 'static {
+    pub(crate) fn set_on_received<F>(&mut self, observer: F) where F: FnMut(&Event, &UdpSocket) + Send + Sync + 'static {
         OptionalClosure::set(&self.on_received, Box::new(observer));
-    }
-
-    pub fn set_on_started<F>(&mut self, on_started: F) where F: FnMut(&SocketAddr) + Send + Sync + 'static {
-        OptionalClosure::set(&self.on_started, Box::new(on_started));
-    }
-
-    pub fn set_on_stopped<F>(&mut self, on_stopped: F) where F: FnMut(&SocketAddr) + Send + Sync + 'static {
-        OptionalClosure::set(&self.on_stopped, Box::new(on_stopped));
     }
 }
 
@@ -180,6 +157,6 @@ impl Debug for Event {
 
 impl Debug for Udp {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.socket.local_addr().unwrap())
+        write!(f, "{}", self.socket.peer_addr().unwrap())
     }
 }
