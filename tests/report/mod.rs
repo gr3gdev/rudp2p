@@ -129,10 +129,9 @@ pub(crate) fn report_cucumber(report: &str) {
             }
         }
     }
-    let mut readme = File::create("target/featuresReplacer.json").unwrap();
+    let mut readme = File::create("target/replacer.txt").unwrap();
     let mut buf = Vec::new();
-    buf.append(&mut "[\n  {\n    \"search\": \"{FEATURES}\",".as_bytes().to_vec());
-    buf.append(&mut "\n    \"replace\": \"".as_bytes().to_vec());
+    buf.append(&mut "{FEATURES}:".as_bytes().to_vec());
     buf.append(&mut "## Features\\n".as_bytes().to_vec());
     for feature in features {
         buf.append(&mut format!("\\n- {} {}\\n", status_checkbox_md(feature.status), feature.name).as_bytes().to_vec());
@@ -140,6 +139,5 @@ pub(crate) fn report_cucumber(report: &str) {
             buf.append(&mut format!("    - {} {}\\n", status_checkbox_md(scenario.status), scenario.name).as_bytes().to_vec());
         }
     }
-    buf.append(&mut "\",\n    \"eval\": false\n  }\n]".as_bytes().to_vec());
     readme.write(buf.as_slice()).expect("Unable to write into README.md");
 }

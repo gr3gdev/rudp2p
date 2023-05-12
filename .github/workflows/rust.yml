@@ -20,8 +20,11 @@ jobs:
         run: cargo build --verbose
       - name: Run tests
         run: cargo test --test peer
-      - uses: Readme-Workflows/readme-replacer@v1.0.1
+      - name: Update README
         env:
           GITHUB_TOKEN: ${{ secrets.ACTIONS_GITHUB_TOKEN }}
-        with:
-          CUSTOM_REPLACER_FILE: './target/featuresReplacer.json'
+        run: |
+          bash generate_readme.sh
+          git add README.md
+          git commit -m "Update README"
+          git push
