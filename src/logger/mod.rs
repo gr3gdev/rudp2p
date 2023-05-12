@@ -1,3 +1,4 @@
+/// Macro for write an info log message.
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {{
@@ -6,6 +7,7 @@ macro_rules! info {
     }}
 }
 
+/// Macro for write an error log message.
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {{

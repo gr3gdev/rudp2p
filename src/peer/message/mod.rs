@@ -7,8 +7,11 @@ use crate::utils::{read_file, write_file};
 
 // STRUCT
 
+/// # PeerMessage
+///
+/// A structure for send and receive messages.
 pub struct PeerMessage {
-    /// UID of the message.
+    /// Unique identifier of the message.
     pub uid: Vec<u8>,
     /// Start of the byte array of the content message.
     start: usize,
@@ -32,10 +35,12 @@ impl Clone for PeerMessage {
 }
 
 impl PeerMessage {
+    /// Generate a PeerMessage from text.
     pub fn from_text(text: &str) -> PeerMessage {
         PeerMessage::new(Vec::from(text), None)
     }
 
+    /// Generate a PeerMessage from file.
     pub fn from_file(path: &str) -> PeerMessage {
         PeerMessage::new(read_file(path), None)
     }
@@ -83,14 +88,17 @@ impl PeerMessage {
         }
     }
 
+    /// Get the UID of the PeerMessage.
     pub fn uid(message: &PeerMessage) -> String {
         String::from_utf8(message.uid.clone()).unwrap()
     }
 
+    /// Convert the PeerMessage to text.
     pub fn to_string(&self) -> String {
         String::from_utf8(self.content.clone()).unwrap()
     }
 
+    /// Convert the PeerMessage to file.
     pub fn to_file(&self, path: &str) -> File {
         write_file(self.content.as_slice(), path)
     }
