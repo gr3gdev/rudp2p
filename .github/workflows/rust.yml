@@ -24,7 +24,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ACTIONS_GITHUB_TOKEN }}
         with:
-          TEMPLATE_FILE: './TEMPLATE.md'
-          COMMIT_FILE: './README.md'
-          COMMIT_MESSAGE: 'Update README'
           CUSTOM_REPLACER_FILE: './target/featuresReplacer.json'
