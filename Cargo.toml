@@ -1,7 +1,14 @@
 [package]
 name = "rudp2p"
+description = "Library to exchange P2P messages with UDP protocol"
 version = "0.1.0"
+authors = ["Grégory Tardivel"]
+repository = "https://github.com/gr3gdev/rudp2p"
 edition = "2021"
+license = "LICENSE"
+keywords = ["P2P", "UDP"]
+categories = ["network-programming", "web-programming"]
+exclude = ["generate_readme.sh", "TEMPLATE.md", "/features", "/.github", "/.run"]
 
 [lib]
 name = "rudp2plib"
