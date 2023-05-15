@@ -1,7 +1,21 @@
-# Documentation of the library
+# RUDP2P
+[![Rust tests](https://github.com/gr3gdev/rudp2p/actions/workflows/rust.yml/badge.svg)](https://github.com/gr3gdev/rudp2p/actions/workflows/rust.yml)
 
-## Dispatcher
-Manage connections.
+RUDP2P is a Rust library for P2P exchange with the UDP protocol.
 
-## Exchange
-Send and receive messages.
+## Features
+
+- [X] Dispatch connections
+    - [X] Connection and disconnection
+
+- [X] Authorized peers
+    - [X] Connection only with specifics peers
+
+- [X] Block peers
+    - [X] Block an authorized peer
+    - [X] A block peer attempt to connect
+
+- [X] Exchange messages
+    - [X] Send a text to all peers
+    - [X] Send a file to a peer
+
