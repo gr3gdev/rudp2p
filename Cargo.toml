@@ -5,7 +5,6 @@ version = "0.1.0"
 authors = ["Grégory Tardivel"]
 repository = "https://github.com/gr3gdev/rudp2p"
 edition = "2021"
-license = "GPL-3.0-only"
 license-file = "LICENSE"
 keywords = ["P2P", "UDP"]
 categories = ["network-programming", "web-programming"]
@@ -25,4 +24,3 @@ openssl-sys = "0.9"
 openssl = "0.10"
 cucumber = { version = "0.19", features = ["output-json"] }
 futures = "0.3"
-serde_json = "1.0"

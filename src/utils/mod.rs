@@ -1,84 +1,89 @@
-use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
-use std::fs;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::sync::{Arc, LockResult, Mutex, MutexGuard};
+use std::{collections::HashMap, net::SocketAddr, sync::MutexGuard};
 
-// Arc : permet de partager la liste entre plusieurs threads
-// Mutex : permet de verrouiller la liste pour garantir l'accès exclusif aux threads
+use openssl::{
+    pkey::Private,
+    rsa::{Padding, Rsa},
+};
 
-// COMMON FUNCTIONS
+use crate::{PeerError, RemotePeer};
 
-/// Read a file into Vec from a path.
-pub fn read_file(path: &str) -> Vec<u8> {
-    let mut f = File::open(path).expect(format!("File not found : {}", path).as_str());
-    let metadata = fs::metadata(&path).expect("Unable to read metadata");
-    let mut buffer = vec![0; metadata.len() as usize];
-    f.read(&mut buffer).expect("Buffer overflow");
-    buffer
-}
-
-/// Write a file into a path from [u8].
-pub(crate) fn write_file(data: &[u8], path: &str) -> File {
-    let mut file = File::create(path).expect(format!("Unable to create the file {}", path).as_str());
-    file.write(data).expect("Unable to write into file");
-    file
-}
-
-// STRUCT
-
-/// ThreadSafe data, use Arc and Mutex.
-pub struct ThreadSafe<T> {
-    /// ThreadSafe data.
-    data: Arc<Mutex<T>>,
-}
-
-pub(crate) struct OptionalClosure<T: ?Sized> {
-    /// Optional closure.
-    data: ThreadSafe<RefCell<Option<Box<T>>>>,
-}
-
-// IMPL
-
-impl<T> ThreadSafe<T> {
-    pub fn new(val: T) -> ThreadSafe<T> {
-        ThreadSafe {
-            data: Arc::new(Mutex::new(val))
-        }
-    }
-
-    pub fn clone(&self) -> Arc<Mutex<T>> {
-        Arc::clone(&self.data)
-    }
-
-    pub fn lock(&self) -> LockResult<MutexGuard<'_, T>> {
-        self.data.lock()
+pub(crate) fn encrypt(public_key_pem: &[u8], data: &Vec<u8>) -> Result<Vec<u8>, PeerError> {
+    if public_key_pem.is_empty() {
+        Err(PeerError::new("Invalid public key (empty)"))
+    } else {
+        Rsa::public_key_from_pem(public_key_pem)
+            .or_else(|e| Err(PeerError::new_ssl("Error when generate public key", e)))
+            .and_then(|rsa| {
+                let mut buf = vec![0; rsa.size() as usize];
+                rsa.public_encrypt(data.as_slice(), &mut buf, Padding::PKCS1)
+                    .and_then(|_| Ok(buf))
+                    .or_else(|e| Err(PeerError::new_ssl("Error when encrypt data", e)))
+            })
     }
 }
 
-impl<T: ?Sized> OptionalClosure<T> {
-    pub(crate) fn new(val: Option<Box<T>>) -> OptionalClosure<T> {
-        OptionalClosure {
-            data: ThreadSafe::new(RefCell::new(val))
-        }
-    }
-
-    pub(crate) fn set(data: &OptionalClosure<T>, closure: Box<T>) {
-        let closure = Some(closure);
-        let closure_cell = RefCell::new(closure);
-        let closure_mutex = data.data.clone();
-        let mut guard = closure_mutex.lock().unwrap();
-        *guard = closure_cell;
-    }
-
-    pub(crate) fn shared(&self) -> Arc<Mutex<RefCell<Option<Box<T>>>>> {
-        self.data.clone()
-    }
+pub(crate) fn decrypt(rsa: Rsa<Private>, data: &Vec<u8>) -> Result<Vec<u8>, PeerError> {
+    let mut buf = vec![0; rsa.size() as usize];
+    rsa.private_decrypt(&data, &mut buf, Padding::PKCS1)
+        .or_else(|e| Err(PeerError::new_ssl("Error when decrypt data", e)))
+        .and_then(|_| Ok(buf))
 }
 
-impl<T: Debug> Debug for ThreadSafe<T> {
-    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
-        Ok(())
+pub(crate) fn from_ne_bytes(data: &Vec<u8>, index: usize) -> usize {
+    usize::from_ne_bytes([
+        data[index],
+        data[index + 1],
+        data[index + 2],
+        data[index + 3],
+        data[index + 4],
+        data[index + 5],
+        data[index + 6],
+        data[index + 7],
+    ])
+}
+
+pub(crate) fn is_new_peer(
+    peers: MutexGuard<'_, HashMap<String, RemotePeer>>,
+    uid: &String,
+) -> bool {
+    !peers.contains_key(uid)
+}
+
+pub(crate) fn find_peer_by_id(
+    peers: MutexGuard<'_, HashMap<String, RemotePeer>>,
+    uid: &String,
+) -> Result<RemotePeer, PeerError> {
+    peers
+        .get(uid)
+        .ok_or(PeerError::new("Peer not found"))
+        .map(|r| r.clone())
+}
+
+pub(crate) fn find_peer_by_address(
+    peers: MutexGuard<'_, HashMap<String, RemotePeer>>,
+    address: SocketAddr,
+) -> Result<String, PeerError> {
+    peers
+        .iter()
+        .find(|s| s.1.address == address)
+        .map(|s| s.0.clone())
+        .ok_or(PeerError::new("Peer not found"))
+}
+
+#[cfg(test)]
+mod test {
+    use openssl::rsa::Rsa;
+
+    use super::{decrypt, encrypt};
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        let rsa = Rsa::generate(2048).unwrap();
+        let public_key = rsa.public_key_to_pem().unwrap();
+        let data = "This is a text for tests".as_bytes().to_vec();
+        let encrypted = encrypt(public_key.as_slice(), &data).unwrap();
+        let mut decrypted = decrypt(rsa, &encrypted).unwrap();
+        decrypted.truncate(data.len());
+        assert_eq!(data, decrypted);
     }
 }
