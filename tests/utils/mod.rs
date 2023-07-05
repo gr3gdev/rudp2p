@@ -1,16 +1,7 @@
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::Read;
 use std::time::{Duration, SystemTime};
 use std::{env, fs, thread};
-
-pub(crate) fn log(message: String) {
-    let mut file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open("target/tests.log")
-        .unwrap();
-    writeln!(file, "{message}").unwrap();
-}
 
 pub(crate) fn read_file(file: &str) -> Vec<u8> {
     let current_dir = env::current_dir().unwrap();
@@ -23,8 +14,7 @@ pub(crate) fn read_file(file: &str) -> Vec<u8> {
     buffer
 }
 
-pub(crate) fn wait_while_condition(message: String, condition: &dyn Fn() -> bool) {
-    log(format!("Wait while condition is true : {message}"));
+pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) {
     let start = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -36,7 +26,6 @@ pub(crate) fn wait_while_condition(message: String, condition: &dyn Fn() -> bool
             .unwrap()
             .as_millis();
         if current - start > 5000 {
-            log("Timeout !".to_string());
             panic!("Timeout !");
         }
     }
