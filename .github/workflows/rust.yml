@@ -19,15 +19,4 @@ jobs:
       - name: Build
         run: cargo build --verbose
       - name: Run tests
-        run: cargo test --test peer
-      - name: Update README
-        run: |
-          bash generate_readme.sh
-          modifs=$(git status --porcelain | grep README | wc -l)
-          if [ $modifs != 0 ]; then
-            git config --local user.name "GitHub Action [bot]"
-            git config --local user.email "github-actions[bot]@users.noreply.github.com"
-            git add README.md
-            git commit -m "Update README"
-            git push origin master
-          fi
+        run: cargo test

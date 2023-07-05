@@ -4,49 +4,54 @@ Feature: Dispatch connections
     Given the following peers are started
       | Name | Port |
       | P0   | 9000 |
-    When the following peers connect to "P0"
-      | Name | Port |
       | P1   | 9001 |
-    Then the peer "P0" receives
-      | Event     | From |
-      | Connected | P1   |
-    Then the peer "P1" receives
-      | Event     | From |
-      | Connected | P0   |
-    When the following peers connect to "P0"
-      | Name | Port |
       | P2   | 9002 |
+      | P3   | 9003 |
+    When the peer "P1" connects to "P0"
     Then the peer "P0" receives
       | Event     | From |
-      | Connected | P2   |
-    And the peer "P2" receives
-      | Event     | From |
-      | Connected | P0   |
-      | Connected | P1   |
-    Then the peer "P1" receives
-      | Event     | From |
-      | Connected | P2   |
-    When the following peers connect to "P0"
-      | Name | Port |
-      | P3   | 9003 |
-    Then the peer "P3" receives
-      | Event     | From |
-      | Connected | P0   |
-      | Connected | P1   |
-      | Connected | P2   |
-    And the peer "P2" receives
-      | Event     | From |
-      | Connected | P3   |
+      | CONNECTED | P1   |
     And the peer "P1" receives
       | Event     | From |
-      | Connected | P3   |
+      | CONNECTED | P0   |
+    When the peer "P2" connects to "P0"
+    Then the peer "P0" receives
+      | Event     | From |
+      | CONNECTED | P2   |
+    And the peer "P1" receives
+      | Event     | From |
+      | CONNECTED | P2   |
+    And the peer "P2" receives
+      | Event     | From |
+      | CONNECTED | P0   |
+      | CONNECTED | P1   |
+    When the peer "P3" connects to "P0"
+    Then the peer "P0" receives
+      | Event     | From |
+      | CONNECTED | P3   |
+    And the peer "P1" receives
+      | Event     | From |
+      | CONNECTED | P3   |
+    And the peer "P2" receives
+      | Event     | From |
+      | CONNECTED | P3   |
+    And the peer "P3" receives
+      | Event     | From |
+      | CONNECTED | P0   |
+      | CONNECTED | P1   |
+      | CONNECTED | P2   |
     When the peer "P2" disconnects
     Then the peer "P0" receives
       | Event        | From |
-      | Disconnected | P2   |
-    Then the peer "P1" receives
+      | DISCONNECTED | P2   |
+    And the peer "P1" receives
       | Event        | From |
-      | Disconnected | P2   |
+      | DISCONNECTED | P2   |
     And the peer "P3" receives
       | Event        | From |
-      | Disconnected | P2   |
+      | DISCONNECTED | P2   |
+    And the peer "P2" receives
+      | Event        | From |
+      | DISCONNECTED | P0   |
+      | DISCONNECTED | P1   |
+      | DISCONNECTED | P3   |
