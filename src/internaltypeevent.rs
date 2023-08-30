@@ -16,7 +16,7 @@ impl InternalTypeEvent {
             1 => Ok(InternalTypeEvent::DISCONNECTING),
             2 => Ok(InternalTypeEvent::MESSAGE),
             3 => Ok(InternalTypeEvent::PEERS),
-            _ => Err(Error::custom("Unknown event !".to_owned())),
+            _ => Err(Error::custom("Unknown event !")),
         }
     }
 }

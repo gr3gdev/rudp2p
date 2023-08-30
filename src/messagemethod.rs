@@ -16,7 +16,7 @@ impl MessageMethod {
             1 => Ok(MessageMethod::Response),
             2 => Ok(MessageMethod::RequestAndResponse),
             3 => Ok(MessageMethod::Other),
-            _ => Err(Error::custom("Unknown method !".to_owned())),
+            _ => Err(Error::custom("Unknown method !")),
         }
     }
 }

@@ -134,7 +134,7 @@ impl Message {
             }
         }
         if uid.is_none() || event.is_none() {
-            Err(Error::custom("Invalid structure of message".to_owned()))
+            Err(Error::custom("Invalid structure of message"))
         } else {
             Ok(Message {
                 uid: uid.unwrap(),

@@ -28,10 +28,10 @@ impl FlowProcessor for ConnectingFlow {
                 let mut event = None;
                 let mut peers_connected = peer_data.peers_connected.clone().unwrap();
                 if peer_data.rejects.contains(&peer_uid) {
-                    let mut message = "Peer ".to_owned();
+                    let mut message = String::from("Peer ");
                     message.push_str(peer_uid.as_str());
                     message.push_str(" is blocked");
-                    Err(Error::custom(message))
+                    Err(Error::custom(&message))
                 } else {
                     if !peers_connected.contains_key(&peer_uid) && sender != &peer_data.addr {
                         // Add remote peer to list of connected (with public key)

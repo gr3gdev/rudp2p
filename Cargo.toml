@@ -1,14 +1,14 @@
 [package]
 name = "rudp2p"
 description = "Library to exchange P2P messages with UDP protocol"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Grégory Tardivel"]
 repository = "https://github.com/gr3gdev/rudp2p"
 edition = "2021"
 license-file = "LICENSE"
 keywords = ["P2P", "UDP"]
 categories = ["network-programming", "web-programming"]
-exclude = ["generate_readme.sh", "TEMPLATE.md", "/features", "/.github", "/.run"]
+exclude = ["/features", "/.github", "/tests", "/target"]
 
 [lib]
 name = "rudp2plib"
@@ -22,5 +22,7 @@ harness = false
 [dependencies]
 openssl-sys = "0.9"
 openssl = "0.10"
+
+[dev-dependencies]
 cucumber = "0.19"
 futures = "0.3"

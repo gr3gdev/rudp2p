@@ -12,7 +12,7 @@ impl Display for Error {
         } else if self.ssl_error.is_some() {
             cause = self.ssl_error.as_ref().unwrap().to_string();
         } else {
-            cause = "unknown".to_owned();
+            cause = String::from("unknown");
         }
         f.debug_struct("Error")
             .field("message", &self.message)
@@ -25,7 +25,7 @@ impl Error {
     /// IO
     pub(crate) fn io(error: std::io::Error) -> Self {
         Self {
-            message: "IO Error".to_owned(),
+            message: String::from("IO Error"),
             io_error: Some(error),
             ssl_error: None,
         }
@@ -34,16 +34,16 @@ impl Error {
     /// SSL
     pub(crate) fn ssl(error: ErrorStack) -> Self {
         Self {
-            message: "SSL Error".to_owned(),
+            message: String::from("SSL Error"),
             io_error: None,
             ssl_error: Some(error),
         }
     }
 
     /// Custom error (only message)
-    pub(crate) fn custom(message: String) -> Self {
+    pub(crate) fn custom(message: &str) -> Self {
         Self {
-            message,
+            message: String::from(message),
             io_error: None,
             ssl_error: None,
         }

@@ -62,8 +62,9 @@ mod test {
     fn init_peer(port: u16, peers: HashMap<String, RemotePeer>) -> InternalPeer {
         let rsa = Rsa::generate(1024).unwrap();
         let public_key_pem = rsa.public_key_to_pem().unwrap();
+        let uid = String::from("PeerTest");
         InternalPeer {
-            uid: "PeerTest".to_owned(),
+            uid,
             public_key_pem,
             private_key: Some(rsa),
             addr: init_sender(port),
@@ -87,7 +88,7 @@ mod test {
         HashMap<String, RemotePeer>,
         HashMap<SocketAddr, Vec<Message>>,
     ) {
-        let uid_message = "Message001".to_owned();
+        let uid_message = String::from("Message001");
         let mut cache_messages = HashMap::new();
         cache_messages.insert(uid_message.clone(), vec![message]);
         Event::parse(peer_data, &uid_message, &sender, &cache_messages).unwrap()
@@ -96,10 +97,11 @@ mod test {
     #[test]
     fn test_parse_connecting() {
         let mut peers_connected = HashMap::new();
+        let other = String::from("Other");
         peers_connected.insert(
-            "Other".to_owned(),
+            other.clone(),
             RemotePeer {
-                uid: "Other".to_owned(),
+                uid: other.clone(),
                 addr: init_sender(9002),
                 public_key: None,
             },
@@ -128,10 +130,11 @@ mod test {
     fn test_parse_disconnecting() {
         let sender = init_sender(9001);
         let mut peers_connected = HashMap::new();
+        let other = String::from("Other");
         peers_connected.insert(
-            "Other".to_owned(),
+            other.clone(),
             RemotePeer {
-                uid: "Other".to_owned(),
+                uid: other.clone(),
                 addr: sender,
                 public_key: None,
             },
@@ -158,10 +161,11 @@ mod test {
         let sender_pk = rsa.public_key_to_pem().unwrap();
         let sender = init_sender(9001);
         let mut peers_connected = HashMap::new();
+        let other = String::from("Other");
         peers_connected.insert(
-            "Other".to_owned(),
+            other.clone(),
             RemotePeer {
-                uid: "Other".to_owned(),
+                uid: other.clone(),
                 addr: sender,
                 public_key: Some(sender_pk.clone()),
             },

@@ -29,7 +29,7 @@ impl Data {
             }
             Data::PublicKey => {
                 if value.public_key_pem.is_empty() {
-                    Err(Error::custom("Public key is empty !".to_owned()))
+                    Err(Error::custom("Public key is empty !"))
                 } else {
                     let public_key = value.public_key_pem.clone();
                     let mut pk_size = public_key.len().to_ne_bytes().to_vec();
@@ -96,7 +96,7 @@ impl Encoder {
         private_key: Option<&Rsa<Private>>,
     ) -> Result<(String, Vec<u8>, Vec<(String, SocketAddr)>), Error> {
         let mut index = 0;
-        let mut uid = "".to_owned();
+        let mut uid = String::default();
         let mut public_key_pem = vec![];
         let mut peers = Vec::new();
         for d in data {
@@ -137,7 +137,7 @@ impl Encoder {
 
     pub(crate) fn encrypt(public_key_pem: &[u8], data: &Vec<u8>) -> Result<Vec<u8>, Error> {
         if public_key_pem.is_empty() {
-            Err(Error::custom("Invalid public key (empty)".to_owned()))
+            Err(Error::custom("Invalid public key (empty)"))
         } else {
             Rsa::public_key_from_pem(public_key_pem)
                 .or_else(|e| Err(Error::ssl(e)))
@@ -201,24 +201,27 @@ mod tests {
         let public_key_pem = rsa.public_key_to_pem().unwrap();
         let addr = "127.0.0.1".parse::<IpAddr>().unwrap();
         let mut peers = HashMap::new();
+        let uid = String::from("PeerTest");
+        let other1 = String::from("Other1");
+        let other2 = String::from("Other2");
         peers.insert(
-            "Other1".to_owned(),
+            other1.clone(),
             RemotePeer {
-                uid: "Other1".to_owned(),
+                uid: other1.clone(),
                 addr: SocketAddr::new(addr, 9001),
                 public_key: None,
             },
         );
         peers.insert(
-            "Other2".to_owned(),
+            other2.clone(),
             RemotePeer {
-                uid: "Other2".to_owned(),
+                uid: other2.clone(),
                 addr: SocketAddr::new(addr, 9002),
                 public_key: None,
             },
         );
         let peer = InternalPeer {
-            uid: "PeerTest".to_owned(),
+            uid,
             public_key_pem,
             private_key: Some(rsa),
             addr: SocketAddr::new(addr, 9000),

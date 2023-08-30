@@ -67,7 +67,7 @@ impl Peer {
             }
             Ok(remote.uid.clone())
         } else {
-            Err(Error::custom("This UID is not found".to_owned()))
+            Err(Error::custom("This UID is not found"))
         }
     }
 
@@ -308,7 +308,7 @@ impl Peer {
     }
 
     fn build_uid(uid: Option<&str>) -> String {
-        let mut default_uid = "P".to_owned();
+        let mut default_uid = String::from("P");
         default_uid.push_str(
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -317,7 +317,7 @@ impl Peer {
                 .to_string()
                 .as_str(),
         );
-        uid.map(|s| s.to_owned()).unwrap_or(default_uid)
+        uid.map(String::from).unwrap_or(default_uid)
     }
 }
 
@@ -462,21 +462,21 @@ mod tests {
 
         peer1.connect_to(peer2.addr());
         wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            "Peer2".to_owned()
+            String::from("Peer2")
         });
         wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            "Peer1".to_owned()
+            String::from("Peer1")
         });
 
         peer3.connect_to(peer2.addr());
         wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            "Peer2,Peer3".to_owned()
+            String::from("Peer2,Peer3")
         });
         wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            "Peer1,Peer3".to_owned()
+            String::from("Peer1,Peer3")
         });
         wait_until(&|| peer3_connected.lock().unwrap().join(","), &|| {
-            "Peer1,Peer2".to_owned()
+            String::from("Peer1,Peer2")
         });
 
         peer1.close();
@@ -520,13 +520,13 @@ mod tests {
         peer3.connect_to(peer1.addr());
 
         wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            "Peer2,Peer3".to_owned()
+            String::from("Peer2,Peer3")
         });
         wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            "Peer1".to_owned()
+            String::from("Peer1")
         });
         wait_until(&|| peer3_connected.lock().unwrap().join(","), &|| {
-            "Peer1".to_owned()
+            String::from("Peer1")
         });
 
         peer1.close();
@@ -560,16 +560,16 @@ mod tests {
         peer1.connect_to(peer2.addr());
 
         wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            "Peer1".to_owned()
+            String::from("Peer1")
         });
 
-        peer2.disconnect_to("Peer1".to_owned());
+        peer2.disconnect_to(String::from("Peer1"));
 
         wait_until(&|| peer1_disconnected.lock().unwrap().join(","), &|| {
-            "Peer2".to_owned()
+            String::from("Peer2")
         });
         wait_until(&|| peer2_disconnected.lock().unwrap().join(","), &|| {
-            "Peer1".to_owned()
+            String::from("Peer1")
         });
 
         peer1.close();
@@ -613,7 +613,7 @@ mod tests {
 
         peer1.connect_to(peer2.addr());
         wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            "Peer2".to_owned()
+            String::from("Peer2")
         });
 
         peer1
@@ -631,7 +631,7 @@ mod tests {
                     .unwrap()
                     .join(",")
             },
-            &|| "Hello !".to_owned(),
+            &|| String::from("Hello !"),
         );
     }
 
@@ -668,7 +668,7 @@ mod tests {
         peer1.connect_to(peer2.addr());
         peer3.connect_to(peer2.addr());
         wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            "Peer2,Peer3".to_owned()
+            String::from("Peer2,Peer3")
         });
 
         let mut remotes = peer1.send_to_all(Message::new("Hello !".as_bytes().to_vec()));
@@ -690,7 +690,7 @@ mod tests {
                     .unwrap()
                     .join(",")
             },
-            &|| "Hello !".to_owned(),
+            &|| String::from("Hello !"),
         );
         wait_until(
             &|| {
@@ -701,7 +701,7 @@ mod tests {
                     .unwrap()
                     .join(",")
             },
-            &|| "Hello !".to_owned(),
+            &|| String::from("Hello !"),
         );
     }
 
@@ -735,11 +735,11 @@ mod tests {
         .unwrap();
         peer1.connect_to(peer2.addr());
         wait_until(&|| false, &|| peer2_message.lock().unwrap().is_empty());
-        wait_until(&|| "Hello I am Peer1".to_owned(), &|| {
+        wait_until(&|| String::from("Hello I am Peer1"), &|| {
             peer2_message.lock().unwrap().get(0).unwrap().clone()
         });
         wait_until(&|| false, &|| peer1_message.lock().unwrap().is_empty());
-        wait_until(&|| "Hello I am Peer2".to_owned(), &|| {
+        wait_until(&|| String::from("Hello I am Peer2"), &|| {
             peer1_message.lock().unwrap().get(0).unwrap().clone()
         });
     }
