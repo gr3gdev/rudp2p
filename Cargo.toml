@@ -1,7 +1,7 @@
 [package]
 name = "rudp2p"
 description = "Library to exchange P2P messages with UDP protocol"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Grégory Tardivel"]
 repository = "https://github.com/gr3gdev/rudp2p"
 edition = "2021"
@@ -20,9 +20,9 @@ name = "peer"
 harness = false
 
 [dependencies]
-openssl-sys = "0.9"
 openssl = "0.10"
 
 [dev-dependencies]
+openssl-sys = "0.9"
 cucumber = "0.19"
 futures = "0.3"
