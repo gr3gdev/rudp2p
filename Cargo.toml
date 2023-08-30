@@ -8,7 +8,7 @@ edition = "2021"
 license-file = "LICENSE"
 keywords = ["P2P", "UDP"]
 categories = ["network-programming", "web-programming"]
-exclude = ["/features", "/.github", "/tests", "/target"]
+exclude = ["/features", "/.github", "/target"]
 
 [lib]
 name = "rudp2plib"
