@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use crate::data::{DataTable, Event, PeerData};
 use crate::utils::read_file;
 use cucumber::{gherkin::Step, given, then, when, World};
 use data::PeersWorld;
-use rudp2plib::Message;
+use rudp2plib::network::Request;
 
 pub(crate) mod data;
 pub(crate) mod utils;
@@ -10,7 +12,7 @@ pub(crate) mod utils;
 #[given(expr = "the following peers are started")]
 async fn start_peers(world: &mut PeersWorld, step: &Step) {
     let peers = PeerData::read_from_datatable(step);
-    world.add_all(peers);
+    world.add_all(peers).await;
 }
 
 #[when(expr = "the peer {string} connects to {string}")]
@@ -24,13 +26,13 @@ async fn connect_peer(world: &mut PeersWorld, from: String, to: String) {
 #[when(expr = "the peer {string} disconnects")]
 async fn disconnect_peer(world: &mut PeersWorld, peer_name: String) {
     let peer = world.get_peer(peer_name);
-    peer.disconnect_to_all();
+    peer.disconnect_to_all().await;
 }
 
 #[when(expr = "the peer {string} sends {string} to all")]
 async fn peer_sends_to_all(world: &mut PeersWorld, peer_name: String, data: String) {
     let peer = world.get_peer(peer_name);
-    peer.send_to_all(Message::new(data.as_bytes().to_vec()));
+    peer.send_to_all(Request::new(data)).await;
 }
 
 #[when(expr = "the peer {string} sends {string} to {string}")]
@@ -43,36 +45,63 @@ async fn peer_sends_to_peer(
     let peer = world.get_peer(peer_name);
     if data.starts_with("file:") {
         let data_file = read_file(&data[5..]);
-        assert!(peer.send_to(Message::new(data_file), other_peer).is_ok());
+        peer.send_to(Request::new(data_file), other_peer).await;
     } else {
-        assert!(peer
-            .send_to(Message::new(data.as_bytes().to_vec()), other_peer)
-            .is_ok());
+        peer.send_to(Request::new(data), other_peer)
+            .await;
     }
 }
 
 #[when(expr = "the peer {string} blocks the peer {string}")]
 async fn block_peer(world: &mut PeersWorld, peer_name: String, blocked_peer_name: String) {
     let peer = world.get_peer(peer_name);
-    peer.block(blocked_peer_name);
+    peer.block(blocked_peer_name).await;
+}
+
+fn group_event_by_type(events: Vec<Event>) -> HashMap<String, Vec<Event>> {
+    let mut events_by_type = HashMap::new();
+    for e in events {
+        let event_type = e.event.clone();
+        match events_by_type.entry(event_type.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                let list: &mut Vec<Event> = o.get_mut();
+                list.push(e);
+            }
+            std::collections::hash_map::Entry::Vacant(_) => {
+                events_by_type.insert(event_type, vec![e.clone()]);
+            }
+        }
+    }
+    events_by_type
 }
 
 #[then(expr = "the peer {string} does not receives")]
 async fn not_receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
     let events = Event::read_from_datatable(step);
-    world.check_peer_not_receive(peer_name, events);
+    let events_by_type = group_event_by_type(events);
+    for (event_type, events) in events_by_type {
+        if !events.is_empty() {
+            world.check_peer_not_receive(peer_name.clone(), events, event_type);
+        }
+    }
 }
 
 #[then(expr = "the peer {string} receives")]
 async fn receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
     let events = Event::read_from_datatable(step);
-    world.check_peer_receive(peer_name, events);
+    let events_by_type = group_event_by_type(events);
+    for (event_type, events) in events_by_type {
+        if !events.is_empty() {
+            world.check_peer_receive(peer_name.clone(), events, event_type);
+        }
+    }
 }
 
 fn main() {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
     futures::executor::block_on(
         PeersWorld::cucumber()
             .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())
-            .run("features"),
+            .run("features/03 - Exchange messages.feature"),
     );
 }

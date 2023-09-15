@@ -14,17 +14,18 @@ pub(crate) fn read_file(file: &str) -> Vec<u8> {
     buffer
 }
 
-pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) {
-    let start = SystemTime::now()
+pub(crate) fn get_time() -> u128 {
+    SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
-        .as_millis();
+        .as_millis()
+}
+
+pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) {
+    let start = get_time();
     while condition() {
         thread::sleep(Duration::from_millis(1000));
-        let current = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
+        let current = get_time();
         if current - start > 5000 {
             panic!("Timeout !");
         }

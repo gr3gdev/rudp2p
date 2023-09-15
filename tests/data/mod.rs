@@ -1,20 +1,22 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
 };
 
-use crate::utils::wait_while_condition;
 use cucumber::{gherkin::Step, World};
 use futures::{future::LocalBoxFuture, FutureExt};
-use rudp2plib::Peer;
+use rudp2plib::{configuration::Configuration, peer::*};
 
-use crate::utils::read_file;
+use crate::utils::{get_time, read_file, wait_while_condition};
 
 #[derive(World, Debug)]
 #[world(init = Self::new)]
 pub(crate) struct PeersWorld {
     peers: Vec<Peer>,
-    events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
+    connected_events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
+    disconnected_events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
+    message_events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
 }
 
 #[derive(Debug)]
@@ -23,16 +25,15 @@ pub(crate) struct PeerData {
     pub(crate) port: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ReceiveEvent {
-    pub(crate) event: String,
     pub(crate) content: Option<Vec<u8>>,
     pub(crate) from: String,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Event {
-    event: String,
+    pub(crate) event: String,
     content: Option<Vec<u8>>,
     from: String,
 }
@@ -97,10 +98,10 @@ impl DataTable for Event {
 }
 
 impl ReceiveEvent {
-    pub(crate) fn presents_in(&self, events: Vec<Event>) -> bool {
+    pub(crate) fn presents_in(&self, events: Vec<Event>, type_event: String) -> bool {
         events
             .iter()
-            .find(|e| e.event == self.event && e.from == self.from && e.content == self.content)
+            .find(|e| e.event == type_event && e.from == self.from && e.content == self.content)
             .is_some()
     }
 }
@@ -109,33 +110,71 @@ impl PeersWorld {
     fn new() -> Self {
         Self {
             peers: Vec::new(),
-            events: Arc::new(Mutex::new(HashMap::new())),
+            connected_events: Arc::new(Mutex::new(HashMap::new())),
+            disconnected_events: Arc::new(Mutex::new(HashMap::new())),
+            message_events: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub(crate) fn add_all(&mut self, peers: Vec<PeerData>) {
+    fn complete_event(
+        mut e: MutexGuard<HashMap<String, Vec<ReceiveEvent>>>,
+        uid: String,
+        event: ReceiveEvent,
+    ) {
+        match e.entry(uid.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                let list = o.get_mut();
+                if !list.contains(&event) {
+                    list.push(event);
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(_) => {
+                e.insert(uid, vec![event]);
+            }
+        }
+    }
+
+    pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
-            let events = Arc::clone(&self.events);
-            let peer = Peer::start(
-                peer_data.port,
-                Some(peer_data.name.clone().as_str()),
-                true,
-                move |event| {
-                    let mut e = events.lock().expect("Unable to lock event");
-                    let uid = event.to.clone();
+            let connected_events = Arc::clone(&self.connected_events);
+            let disconnected_events = Arc::clone(&self.disconnected_events);
+            let message_events = Arc::clone(&self.message_events);
+            let conf = Configuration::builder()
+                .port(peer_data.port)
+                .name(&peer_data.name)
+                .share_connections(true)
+                .build();
+            let peer = Peer::new(
+                conf,
+                move |c| {
+                    let e = connected_events.lock().expect("Unable to lock event");
                     let event = ReceiveEvent {
-                        event: event.type_event.to_string(),
-                        content: event.message.map(|m| m.data.clone()),
-                        from: event.from,
+                        content: None,
+                        from: c.from.clone(),
                     };
-                    let mut peer_events = vec![event];
-                    let list = e.entry(uid.clone()).or_insert(vec![]);
-                    peer_events.append(list);
-                    e.insert(uid, peer_events);
+                    Self::complete_event(e, c.uid.clone(), event);
                     None
                 },
-            );
-            let peer = peer.expect("Error when create peer");
+                move |d| {
+                    let e = disconnected_events.lock().expect("Unable to lock event");
+                    let event = ReceiveEvent {
+                        content: None,
+                        from: d.from.clone(),
+                    };
+                    Self::complete_event(e, d.uid.clone(), event);
+                    None
+                },
+                move |m| {
+                    let e = message_events.lock().expect("Unable to lock event");
+                    let event = ReceiveEvent {
+                        content: Some(m.content.clone()),
+                        from: m.from.clone(),
+                    };
+                    Self::complete_event(e, m.from.clone(), event);
+                    None
+                },
+            )
+            .await;
             self.peers.push(peer);
         }
     }
@@ -152,33 +191,63 @@ impl PeersWorld {
             for peer in self.peers.iter() {
                 peer.close();
                 // Wait while the server is alive
-                wait_while_condition(&|| peer.is_alive());
+                let start = get_time();
+                while peer.is_alive().await {
+                    std::thread::sleep(Duration::from_millis(1000));
+                    if get_time() - start > 10000 {
+                        panic!("Peer is not stopped !");
+                    }
+                }
             }
         }
         .boxed_local()
     }
 
-    pub(crate) fn check_peer_receive(&self, peer: String, events: Vec<Event>) {
+    pub(crate) fn get_events(
+        &self,
+        type_event: &str,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<ReceiveEvent>>> {
+        match type_event {
+            "CONNECTED" => self
+                .connected_events
+                .lock()
+                .expect("Unable to lock connected_events"),
+            "DISCONNECTED" => self
+                .disconnected_events
+                .lock()
+                .expect("Unable to lock disconnected_events"),
+            "MESSAGE" => self
+                .message_events
+                .lock()
+                .expect("Unable to lock message_events"),
+            _ => panic!("Unknown event"),
+        }
+    }
+
+    pub(crate) fn check_peer_receive(&self, peer: String, events: Vec<Event>, type_event: String) {
         wait_while_condition(&|| {
-            let map = self.events.lock().expect("Unable to lock events");
+            let map = self.get_events(&type_event);
             let empty = vec![];
             let list = map.get(&peer).unwrap_or(&empty);
             list.iter()
-                .find(|e| e.presents_in(events.clone()))
+                .find(|e| e.presents_in(events.clone(), type_event.clone()))
                 .is_none()
         });
     }
 
-    pub(crate) fn check_peer_not_receive(&self, peer: String, events: Vec<Event>) {
-        wait_while_condition(
-            &|| {
-                let map = self.events.lock().expect("Unable to lock events");
-                let empty = vec![];
-                let list = map.get(&peer).unwrap_or(&empty);
-                list.iter()
-                    .find(|e| e.presents_in(events.clone()))
-                    .is_some()
-            },
-        );
+    pub(crate) fn check_peer_not_receive(
+        &self,
+        peer: String,
+        events: Vec<Event>,
+        type_event: String,
+    ) {
+        wait_while_condition(&|| {
+            let map = self.get_events(&type_event);
+            let empty = vec![];
+            let list = map.get(&peer).unwrap_or(&empty);
+            list.iter()
+                .find(|e| e.presents_in(events.clone(), type_event.clone()))
+                .is_some()
+        });
     }
 }
