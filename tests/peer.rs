@@ -6,6 +6,7 @@ use cucumber::{gherkin::Step, given, then, when, World};
 use data::PeersWorld;
 use rudp2plib::network::Request;
 
+pub(crate) mod dao;
 pub(crate) mod data;
 pub(crate) mod utils;
 
@@ -47,8 +48,7 @@ async fn peer_sends_to_peer(
         let data_file = read_file(&data[5..]);
         peer.send_to(Request::new(data_file), other_peer).await;
     } else {
-        peer.send_to(Request::new(data), other_peer)
-            .await;
+        peer.send_to(Request::new(data), other_peer).await;
     }
 }
 
@@ -81,7 +81,7 @@ async fn not_receive_event(world: &mut PeersWorld, peer_name: String, step: &Ste
     let events_by_type = group_event_by_type(events);
     for (event_type, events) in events_by_type {
         if !events.is_empty() {
-            world.check_peer_not_receive(peer_name.clone(), events, event_type);
+            world.check_peer_not_receive(peer_name.clone(), events, event_type).await;
         }
     }
 }
@@ -92,7 +92,7 @@ async fn receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
     let events_by_type = group_event_by_type(events);
     for (event_type, events) in events_by_type {
         if !events.is_empty() {
-            world.check_peer_receive(peer_name.clone(), events, event_type);
+            world.check_peer_receive(peer_name.clone(), events, event_type).await;
         }
     }
 }
@@ -102,6 +102,6 @@ fn main() {
     futures::executor::block_on(
         PeersWorld::cucumber()
             .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())
-            .run("features/03 - Exchange messages.feature"),
+            .run("features"),
     );
 }

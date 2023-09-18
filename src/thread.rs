@@ -15,7 +15,11 @@ use crate::{
         part::{self, RequestPart},
         remote, Pool,
     },
-    network::{events::*, request::Type, *},
+    network::{
+        events::{Connected, Disconnected, Message},
+        request::Type,
+        *,
+    },
     service::{
         connection::ConnectionService, disconnection::DisconnectionService,
         message::MessageService, share::ShareService,
@@ -168,9 +172,9 @@ async fn process_response<C, D, M>(
     on_message: Arc<Mutex<Box<M>>>,
 ) -> (Option<Response>, Vec<u8>)
 where
-    C: FnMut(Connected) -> Option<Response>,
-    D: FnMut(Disconnected) -> Option<Response>,
-    M: FnMut(Message) -> Option<Response>,
+    C: FnMut(Connected) -> Option<Response> + Send + 'static,
+    D: FnMut(Disconnected) -> Option<Response> + Send + 'static,
+    M: FnMut(Message) -> Option<Response> + Send + 'static,
 {
     let part_uid = part.uid.clone();
     let request_type = part.request_type.clone();

@@ -1,22 +1,25 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
-};
+use std::time::Duration;
 
 use cucumber::{gherkin::Step, World};
-use futures::{future::LocalBoxFuture, FutureExt};
+use futures::{executor::block_on, future::LocalBoxFuture, FutureExt};
+use log::debug;
+use r2d2_sqlite::SqliteConnectionManager;
 use rudp2plib::{configuration::Configuration, peer::*};
 
-use crate::utils::{get_time, read_file, wait_while_condition};
+use crate::{
+    dao::{
+        add_connection, add_disconnection, add_message, get_connection_for_peer,
+        get_disconnection_for_peer, get_message_for_peer, init, ConnectedEvent, DisconnectedEvent,
+        MessageEvent, Pool,
+    },
+    utils::{get_time, read_file, wait_while_condition},
+};
 
 #[derive(World, Debug)]
 #[world(init = Self::new)]
 pub(crate) struct PeersWorld {
     peers: Vec<Peer>,
-    connected_events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
-    disconnected_events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
-    message_events: Arc<Mutex<HashMap<String, Vec<ReceiveEvent>>>>,
+    pool: Pool,
 }
 
 #[derive(Debug)]
@@ -25,16 +28,10 @@ pub(crate) struct PeerData {
     pub(crate) port: u16,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct ReceiveEvent {
-    pub(crate) content: Option<Vec<u8>>,
-    pub(crate) from: String,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct Event {
     pub(crate) event: String,
-    content: Option<Vec<u8>>,
+    content: Vec<u8>,
     from: String,
 }
 
@@ -77,13 +74,13 @@ impl DataTable for Event {
                 if row.len() == 3 {
                     let data = row[1].clone();
                     if data.starts_with("file:") {
-                        content = Some(read_file(&data[5..].trim()));
+                        content = read_file(&data[5..].trim());
                     } else {
-                        content = Some(data.as_bytes().to_vec());
+                        content = data.as_bytes().to_vec();
                     }
                     from = row[2].clone();
                 } else {
-                    content = None;
+                    content = vec![];
                     from = row[1].clone();
                 }
                 data.push(Event {
@@ -97,80 +94,61 @@ impl DataTable for Event {
     }
 }
 
-impl ReceiveEvent {
-    pub(crate) fn presents_in(&self, events: Vec<Event>, type_event: String) -> bool {
-        events
-            .iter()
-            .find(|e| e.event == type_event && e.from == self.from && e.content == self.content)
-            .is_some()
-    }
-}
-
 impl PeersWorld {
     fn new() -> Self {
+        let manager = SqliteConnectionManager::file("target/features.db");
+        let pool = Pool::new(manager).expect("Unable to initialize pool");
+        block_on(init(&pool));
         Self {
             peers: Vec::new(),
-            connected_events: Arc::new(Mutex::new(HashMap::new())),
-            disconnected_events: Arc::new(Mutex::new(HashMap::new())),
-            message_events: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    fn complete_event(
-        mut e: MutexGuard<HashMap<String, Vec<ReceiveEvent>>>,
-        uid: String,
-        event: ReceiveEvent,
-    ) {
-        match e.entry(uid.clone()) {
-            std::collections::hash_map::Entry::Occupied(mut o) => {
-                let list = o.get_mut();
-                if !list.contains(&event) {
-                    list.push(event);
-                }
-            }
-            std::collections::hash_map::Entry::Vacant(_) => {
-                e.insert(uid, vec![event]);
-            }
+            pool,
         }
     }
 
     pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
-            let connected_events = Arc::clone(&self.connected_events);
-            let disconnected_events = Arc::clone(&self.disconnected_events);
-            let message_events = Arc::clone(&self.message_events);
             let conf = Configuration::builder()
                 .port(peer_data.port)
                 .name(&peer_data.name)
                 .share_connections(true)
                 .build();
+            let pool_c = self.pool.clone();
+            let pool_d = self.pool.clone();
+            let pool_m = self.pool.clone();
             let peer = Peer::new(
                 conf,
                 move |c| {
-                    let e = connected_events.lock().expect("Unable to lock event");
-                    let event = ReceiveEvent {
-                        content: None,
-                        from: c.from.clone(),
-                    };
-                    Self::complete_event(e, c.uid.clone(), event);
+                    add_connection(
+                        &pool_c,
+                        ConnectedEvent {
+                            from: c.from,
+                            to: c.uid,
+                        },
+                    )
+                    .await;
                     None
                 },
                 move |d| {
-                    let e = disconnected_events.lock().expect("Unable to lock event");
-                    let event = ReceiveEvent {
-                        content: None,
-                        from: d.from.clone(),
-                    };
-                    Self::complete_event(e, d.uid.clone(), event);
+                    add_disconnection(
+                        &pool_d,
+                        DisconnectedEvent {
+                            from: d.from,
+                            to: d.uid,
+                        },
+                    )
+                    .await;
                     None
                 },
                 move |m| {
-                    let e = message_events.lock().expect("Unable to lock event");
-                    let event = ReceiveEvent {
-                        content: Some(m.content.clone()),
-                        from: m.from.clone(),
-                    };
-                    Self::complete_event(e, m.from.clone(), event);
+                    add_message(
+                        &pool_m,
+                        MessageEvent {
+                            from: m.from,
+                            to: m.uid,
+                            content: m.content,
+                        },
+                    )
+                    .await;
                     None
                 },
             )
@@ -203,51 +181,72 @@ impl PeersWorld {
         .boxed_local()
     }
 
-    pub(crate) fn get_events(
-        &self,
-        type_event: &str,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<ReceiveEvent>>> {
-        match type_event {
-            "CONNECTED" => self
-                .connected_events
-                .lock()
-                .expect("Unable to lock connected_events"),
-            "DISCONNECTED" => self
-                .disconnected_events
-                .lock()
-                .expect("Unable to lock disconnected_events"),
-            "MESSAGE" => self
-                .message_events
-                .lock()
-                .expect("Unable to lock message_events"),
-            _ => panic!("Unknown event"),
-        }
-    }
-
-    pub(crate) fn check_peer_receive(&self, peer: String, events: Vec<Event>, type_event: String) {
-        wait_while_condition(&|| {
-            let map = self.get_events(&type_event);
-            let empty = vec![];
-            let list = map.get(&peer).unwrap_or(&empty);
-            list.iter()
-                .find(|e| e.presents_in(events.clone(), type_event.clone()))
-                .is_none()
-        });
-    }
-
-    pub(crate) fn check_peer_not_receive(
+    pub(crate) async fn check_peer_receive(
         &self,
         peer: String,
         events: Vec<Event>,
         type_event: String,
-    ) {
-        wait_while_condition(&|| {
-            let map = self.get_events(&type_event);
-            let empty = vec![];
-            let list = map.get(&peer).unwrap_or(&empty);
-            list.iter()
-                .find(|e| e.presents_in(events.clone(), type_event.clone()))
-                .is_some()
-        });
+    ) -> bool {
+        if type_event == "CONNECTED" {
+            let connections = get_connection_for_peer(&self.pool, &peer).await;
+            debug!(
+                "Check {peer} connected with {:?} - {:?}",
+                events, connections
+            );
+            events
+                .iter()
+                .all(|e| connections.iter().any(|c| c.from == e.from))
+        } else if type_event == "DISCONNECTED" {
+            let disconnections = get_disconnection_for_peer(&self.pool, &peer).await;
+            debug!(
+                "Check {peer} disconnected with {:?} - {:?}",
+                events, disconnections
+            );
+            events
+                .iter()
+                .all(|e| disconnections.iter().any(|d| d.from == e.from))
+        } else if type_event == "MESSAGE" {
+            let messages = get_message_for_peer(&self.pool, &peer).await;
+            debug!(
+                "Check {peer} receive messages {:?} - {:?}",
+                events, messages
+            );
+            events.iter().all(|e| {
+                messages
+                    .iter()
+                    .any(|m| m.from == e.from && m.content == e.content)
+            })
+        } else {
+            false
+        }
+    }
+
+    pub(crate) async fn check_peer_not_receive(
+        &self,
+        peer: String,
+        events: Vec<Event>,
+        type_event: String,
+    ) -> bool {
+        std::thread::sleep(Duration::from_millis(1000));
+        if type_event == "CONNECTED" {
+            let connections = get_connection_for_peer(&self.pool, &peer).await;
+            events
+                .iter()
+                .all(|e| connections.iter().all(|c| c.from != e.from))
+        } else if type_event == "DISCONNECTED" {
+            let disconnections = get_disconnection_for_peer(&self.pool, &peer).await;
+            events
+                .iter()
+                .all(|e| disconnections.iter().all(|d| d.from != e.from))
+        } else if type_event == "MESSAGE" {
+            let messages = get_message_for_peer(&self.pool, &peer).await;
+            events.iter().all(|e| {
+                messages
+                    .iter()
+                    .all(|m| m.from != e.from && m.content != e.content)
+            })
+        } else {
+            false
+        }
     }
 }

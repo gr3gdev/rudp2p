@@ -50,7 +50,6 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt() {
-        env_logger::init_from_env(env_logger::Env::new().default_filter_or("error"));
         let rsa = Rsa::generate(1024).unwrap();
         let pk = rsa.public_key_to_pem().unwrap();
         let data = "Simple text's test.".as_bytes().to_vec();

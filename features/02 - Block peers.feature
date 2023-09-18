@@ -13,8 +13,22 @@ Feature: Block peers
     Then the peer "P0" receives
       | Event     | From |
       | CONNECTED | P1   |
-    When the peer "P1" blocks the peer "P2"
-    And the peer "P2" connects to "P1"
-    Then the peer "P2" does not receives
+    When the peer "P2" connects to "P0"
+    Then the peer "P1" receives
       | Event     | From |
+      | CONNECTED | P2   |
+    Then the peer "P0" receives
+      | Event     | From |
+      | CONNECTED | P2   |
+    Then the peer "P2" receives
+      | Event     | From |
+      | CONNECTED | P0   |
       | CONNECTED | P1   |
+    When the peer "P1" blocks the peer "P2"
+    And the peer "P1" sends "I am a peer" to all
+    Then the peer "P0" receives
+      | Event   | Content     | From |
+      | MESSAGE | I am a peer | P1   |
+    Then the peer "P2" does not receives
+      | Event   | Content     | From |
+      | MESSAGE | I am a peer | P1   |

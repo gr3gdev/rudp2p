@@ -32,6 +32,9 @@ Feature: Exchange messages
 
   Scenario: Send a text to all peers
     When the peer "P1" sends "Hello all" to all
+    Then the peer "P0" receives
+      | Event   | Content   | From |
+      | MESSAGE | Hello all | P1   |
     Then the peer "P2" receives
       | Event   | Content   | From |
       | MESSAGE | Hello all | P1   |

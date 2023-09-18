@@ -21,13 +21,14 @@ pub(crate) fn get_time() -> u128 {
         .as_millis()
 }
 
-pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) {
+pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) -> bool {
     let start = get_time();
     while condition() {
         thread::sleep(Duration::from_millis(1000));
         let current = get_time();
         if current - start > 5000 {
-            panic!("Timeout !");
+            break;
         }
     }
+    condition()
 }
