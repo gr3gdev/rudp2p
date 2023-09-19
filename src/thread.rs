@@ -5,7 +5,6 @@ use std::{
     io,
     net::{SocketAddr, UdpSocket},
     ops::ControlFlow,
-    sync::{Arc, Mutex},
     thread,
 };
 
@@ -15,11 +14,8 @@ use crate::{
         part::{self, RequestPart},
         remote, Pool,
     },
-    network::{
-        events::{Connected, Disconnected, Message},
-        request::Type,
-        *,
-    },
+    network::{request::Type, *},
+    observer::Observer,
     service::{
         connection::ConnectionService, disconnection::DisconnectionService,
         message::MessageService, share::ShareService,
@@ -38,27 +34,19 @@ pub(crate) fn stop_job(socket: &UdpSocket) {
 }
 
 /// Start a thread
-pub(crate) async fn start_job<C, D, M>(
+pub(crate) async fn start_job<O>(
     pool: &Pool,
     uid: String,
     socket: UdpSocket,
     private_key: Rsa<Private>,
     public_key: Vec<u8>,
     share_connections: bool,
-    on_connected: C,
-    on_disconnected: D,
-    on_message: M,
+    observer: O,
 ) -> ()
 where
-    C: FnMut(Connected) -> Option<Response> + Send + 'static,
-    D: FnMut(Disconnected) -> Option<Response> + Send + 'static,
-    M: FnMut(Message) -> Option<Response> + Send + 'static,
+    O: Observer,
 {
     let pool = pool.clone();
-    // Events
-    let on_connected = Arc::new(Mutex::new(Box::new(on_connected)));
-    let on_disconnected = Arc::new(Mutex::new(Box::new(on_disconnected)));
-    let on_message = Arc::new(Mutex::new(Box::new(on_message)));
     // Thread
     thread::spawn(move || {
         let mut buf = [0; 2048];
@@ -78,9 +66,7 @@ where
                         &public_key,
                         &private_key,
                         share_connections,
-                        &on_connected,
-                        &on_disconnected,
-                        &on_message,
+                        observer,
                     )) {
                         debug!("Peer {uid} - break : {reason}");
                         break;
@@ -98,7 +84,7 @@ where
     });
 }
 
-async fn process_message<C, D, M>(
+async fn process_message<O>(
     pool: &Pool,
     addr: SocketAddr,
     buf: [u8; 2048],
@@ -108,14 +94,10 @@ async fn process_message<C, D, M>(
     public_key: &Vec<u8>,
     private_key: &Rsa<Private>,
     share_connections: bool,
-    on_connected: &Arc<Mutex<Box<C>>>,
-    on_disconnected: &Arc<Mutex<Box<D>>>,
-    on_message: &Arc<Mutex<Box<M>>>,
+    observer: O,
 ) -> ControlFlow<String>
 where
-    C: FnMut(Connected) -> Option<Response> + Send + 'static,
-    D: FnMut(Disconnected) -> Option<Response> + Send + 'static,
-    M: FnMut(Message) -> Option<Response> + Send + 'static,
+    O: Observer,
 {
     let blocked = block::select_all(pool).await;
     // Only if address is not blocked
@@ -142,9 +124,7 @@ where
                 private_key,
                 None,
                 share_connections,
-                Arc::clone(on_connected),
-                Arc::clone(on_disconnected),
-                Arc::clone(on_message),
+                observer,
             )
             .await;
             if let Some(response) = res {
@@ -158,7 +138,7 @@ where
     ControlFlow::Continue(())
 }
 
-async fn process_response<C, D, M>(
+async fn process_response<O>(
     pool: &Pool,
     peer: (&String, &Vec<u8>),
     socket: &UdpSocket,
@@ -167,14 +147,10 @@ async fn process_response<C, D, M>(
     private_key: &Rsa<Private>,
     remote_public_key: Option<Vec<u8>>,
     share_connections: bool,
-    on_connected: Arc<Mutex<Box<C>>>,
-    on_disconnected: Arc<Mutex<Box<D>>>,
-    on_message: Arc<Mutex<Box<M>>>,
+    observer: O,
 ) -> (Option<Response>, Vec<u8>)
 where
-    C: FnMut(Connected) -> Option<Response> + Send + 'static,
-    D: FnMut(Disconnected) -> Option<Response> + Send + 'static,
-    M: FnMut(Message) -> Option<Response> + Send + 'static,
+    O: Observer,
 {
     let part_uid = part.uid.clone();
     let request_type = part.request_type.clone();
@@ -197,24 +173,16 @@ where
                     &addr,
                     &connected_peers,
                     share_connections,
-                    on_connected,
+                    observer,
                 )
                 .await
             }
             Type::Disconnection => {
-                DisconnectionService::execute(
-                    pool,
-                    socket,
-                    &request,
-                    &peer.0,
-                    &addr,
-                    on_disconnected,
-                )
-                .await
+                DisconnectionService::execute(pool, socket, &request, &peer.0, &addr, observer)
+                    .await
             }
             Type::Message => {
-                MessageService::execute(&request, &peer.0, &addr, remote_public_key, on_message)
-                    .await
+                MessageService::execute(&request, &peer.0, &addr, remote_public_key, observer).await
             }
             Type::ShareConnection => {
                 ShareService::execute(socket, &request, &peer.0, &peer.1).await

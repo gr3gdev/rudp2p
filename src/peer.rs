@@ -14,7 +14,8 @@ use crate::{
         remote::{self, RemotePeer},
         thread,
     },
-    network::{events::*, *},
+    network::*,
+    observer::Observer,
     thread::{start_job, stop_job},
     utils::generate_uid,
 };
@@ -28,27 +29,53 @@ fn build_uid(uid: Option<String>) -> String {
 ///
 /// Example of a connection
 /// ```
-/// use rudp2plib::{configuration::*, network::*, peer::*};
+/// use async_trait::async_trait;
+/// use rudp2plib::{configuration::*, network::{events::*, *}, observer::*, peer::*};
+///
+/// struct MyObserver {
+///     name: String,
+///     messages: Vec<String>,
+/// }
+///
+/// #[async_trait]
+/// impl Observer for MyObserver {
+///     async fn on_connected(&self, c: Connected) -> Option<Response> {
+///         let mut text = String::from("Hello I am ");
+///         text.push_str(&self.name);
+///         Some(Response::text(&text))
+///     }
+///
+///     async fn on_disconnected(&self, d: Disconnected) -> Option<Response> {
+///         Some(Response::text("Goodbye !"))
+///     }
+///
+///     async fn on_message(&mut self, m: Message) -> Option<Response> {
+///         self.messages.push(String::from_utf8(m.content).unwrap());
+///         None
+///     }
+/// }
 ///
 /// async fn example() {
 ///     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 ///
-
 ///     let peer1 = Peer::new(
 ///         Configuration::builder().port(9001).name("Peer1").build(),
-///         |c| Some(Response::text("Hello I am Peer1 !")),
-///         |d| Some(Response::text("Goodbye !")),
-///         |m| None,
+///         MyObserver{
+///             name: String::from("Peer1"),
+///             messages: Vec::new(),
+///         },
 ///     ).await;
 ///
 ///     let peer2 = Peer::new(
 ///         Configuration::builder().port(9002).name("Peer2").build(),
-///         |c| Some(Response::text("Hello I am Peer2 !")),
-///         |d| Some(Response::text("Goodbye !")),
-///         |m| None,
+///         MyObserver{
+///             name: String::from("Peer2"),
+///             messages: Vec::new(),
+///         },
 ///     ).await;
 ///
 ///     peer1.connect_to(peer2.addr());
+///     std::thread::sleep(std::time::Duration::from_millis(1000));
 ///
 ///     peer1.close();
 ///     peer2.close();
@@ -88,16 +115,9 @@ impl Debug for Peer {
 }
 
 impl Peer {
-    pub async fn new<C, D, M>(
-        configuration: Configuration,
-        on_connected: C,
-        on_disconnected: D,
-        on_message: M,
-    ) -> Peer
+    pub async fn new<O>(configuration: Configuration, observer: O) -> Peer
     where
-        C: FnMut(Connected) -> Option<Response> + Send + 'static,
-        D: FnMut(Disconnected) -> Option<Response> + Send + 'static,
-        M: FnMut(Message) -> Option<Response> + Send + 'static,
+        O: Observer,
     {
         // Init database
         let manager = SqliteConnectionManager::memory();
@@ -148,9 +168,7 @@ impl Peer {
             rsa,
             pk.clone(),
             configuration.share_connections,
-            on_connected,
-            on_disconnected,
-            on_message,
+            observer,
         )
         .await;
 
@@ -229,59 +247,67 @@ mod tests {
         time::{Duration, SystemTime},
     };
 
+    use async_trait::async_trait;
     use futures::executor::block_on;
 
-    use crate::{configuration::Configuration, network::Request};
+    use crate::{
+        configuration::Configuration,
+        network::{
+            events::{Connected, Disconnected, Message},
+            Request, Response,
+        },
+        observer::Observer,
+    };
 
     use super::Peer;
 
-    fn prepare(
-        name: &str,
-        port: u16,
-    ) -> (
-        Peer,
-        Arc<Mutex<Vec<String>>>,
-        Arc<Mutex<Vec<String>>>,
-        Arc<Mutex<HashMap<String, Vec<String>>>>,
-    ) {
-        let peer_connections = Arc::new(Mutex::new(Vec::new()));
-        let peer_disconnections = Arc::new(Mutex::new(Vec::new()));
-        let peer_messages = Arc::new(Mutex::new(HashMap::new()));
+    #[derive(Clone)]
+    struct Test {
+        connections: Arc<Mutex<Vec<String>>>,
+        disconnections: Arc<Mutex<Vec<String>>>,
+        messages: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    }
+
+    #[async_trait]
+    impl Observer for Test {
+        async fn on_connected(&mut self, c: Connected) -> Option<Response> {
+            let mut connections = self.connections.lock().unwrap();
+            connections.push(c.from);
+            None
+        }
+        async fn on_disconnected(&mut self, d: Disconnected) -> Option<Response> {
+            let mut disconnections = self.disconnections.lock().unwrap();
+            disconnections.push(d.from);
+            None
+        }
+        async fn on_message(&mut self, m: Message) -> Option<Response> {
+            let mut messages = self.messages.lock().unwrap();
+            match messages.entry(m.from) {
+                std::collections::hash_map::Entry::Occupied(mut o) => {
+                    let list: &mut Vec<String> = o.get_mut();
+                    list.push(String::from_utf8(m.content).unwrap());
+                }
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(vec![String::from_utf8(m.content).unwrap()]);
+                }
+            }
+            None
+        }
+    }
+
+    fn prepare(name: &str, port: u16) -> (Peer, Test) {
         let conf = Configuration::builder()
             .port(port)
             .name(name)
             .share_connections(true)
             .build();
-        let share_connections = Arc::clone(&peer_connections);
-        let share_disconnections = Arc::clone(&peer_disconnections);
-        let share_messages = Arc::clone(&peer_messages);
-        let peer = block_on(Peer::new(
-            conf,
-            move |c| {
-                let mut connections = share_connections.lock().unwrap();
-                connections.push(c.from);
-                None
-            },
-            move |d| {
-                let mut disconnections = share_disconnections.lock().unwrap();
-                disconnections.push(d.from);
-                None
-            },
-            move |m| {
-                let mut messages = share_messages.lock().unwrap();
-                match messages.entry(m.from) {
-                    std::collections::hash_map::Entry::Occupied(mut o) => {
-                        let list: &mut Vec<String> = o.get_mut();
-                        list.push(String::from_utf8(m.content).unwrap());
-                    }
-                    std::collections::hash_map::Entry::Vacant(v) => {
-                        v.insert(vec![String::from_utf8(m.content).unwrap()]);
-                    }
-                }
-                None
-            },
-        ));
-        (peer, peer_connections, peer_disconnections, peer_messages)
+        let test = Test {
+            connections: Arc::new(Mutex::new(Vec::new())),
+            disconnections: Arc::new(Mutex::new(Vec::new())),
+            messages: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let peer = block_on(Peer::new(conf, test.clone()));
+        (peer, test)
     }
 
     fn wait_while_condition(condition: &dyn Fn() -> bool) {
@@ -313,9 +339,9 @@ mod tests {
     #[test]
     fn validate() {
         env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
-        let (peer1, peer1_connections, peer1_disconnections, peer1_messages) = prepare("P1", 9901);
-        let (peer2, peer2_connections, _, _) = prepare("P2", 9902);
-        let (peer3, peer3_connections, peer3_disconnections, peer3_messages) = prepare("P3", 9903);
+        let (peer1, test1) = prepare("P1", 9901);
+        let (peer2, test2) = prepare("P2", 9902);
+        let (peer3, test3) = prepare("P3", 9903);
 
         let p1_name = String::from("P1");
         let p2_name = String::from("P2");
@@ -327,41 +353,42 @@ mod tests {
         // P3 => P2 ... P2 =(P1)=> P3 ... P3 => P1
         peer3.connect_to(peer2.addr());
         wait_while_condition(&|| {
-            peer1_connections.lock().unwrap().len() < 2
-                || peer2_connections.lock().unwrap().len() < 2
-                || peer3_connections.lock().unwrap().len() < 2
+            test1.connections.lock().unwrap().len() < 2
+                || test2.connections.lock().unwrap().len() < 2
+                || test3.connections.lock().unwrap().len() < 2
         });
         check(
             vec![p2_name.clone(), p3_name.clone()],
-            peer1_connections.lock().unwrap().clone(),
+            test1.connections.lock().unwrap().clone(),
         );
         check(
             vec![p1_name.clone(), p3_name.clone()],
-            peer2_connections.lock().unwrap().clone(),
+            test2.connections.lock().unwrap().clone(),
         );
         check(
             vec![p1_name.clone(), p2_name.clone()],
-            peer3_connections.lock().unwrap().clone(),
+            test3.connections.lock().unwrap().clone(),
         );
 
         // Send message to all
         block_on(peer2.send_to_all(Request::new("Hello everybody !")));
         wait_while_condition(&|| {
-            peer1_messages.lock().unwrap().len() < 1 || peer3_messages.lock().unwrap().len() < 1
+            test1.messages.lock().unwrap().len() < 1 || test3.messages.lock().unwrap().len() < 1
         });
         check(
             vec![(p2_name.clone(), vec![String::from("Hello everybody !")])],
-            Vec::from_iter(peer1_messages.lock().unwrap().clone()),
+            Vec::from_iter(test1.messages.lock().unwrap().clone()),
         );
         check(
             vec![(p2_name.clone(), vec![String::from("Hello everybody !")])],
-            Vec::from_iter(peer3_messages.lock().unwrap().clone()),
+            Vec::from_iter(test3.messages.lock().unwrap().clone()),
         );
 
         // Send message to peer
         block_on(peer2.send_to(Request::new("What's your name ?"), p1_name.clone()));
         wait_while_condition(&|| {
-            peer1_messages
+            test1
+                .messages
                 .lock()
                 .unwrap()
                 .get(&p2_name.clone())
@@ -377,30 +404,30 @@ mod tests {
                     String::from("What's your name ?"),
                 ],
             )],
-            Vec::from_iter(peer1_messages.lock().unwrap().clone()),
+            Vec::from_iter(test1.messages.lock().unwrap().clone()),
         );
 
         // Disconnection with all
         block_on(peer2.disconnect_to_all());
         wait_while_condition(&|| {
-            peer1_disconnections.lock().unwrap().len() < 1
-                || peer3_disconnections.lock().unwrap().len() < 1
+            test1.disconnections.lock().unwrap().len() < 1
+                || test3.disconnections.lock().unwrap().len() < 1
         });
         check(
             vec![p2_name.clone()],
-            peer1_disconnections.lock().unwrap().clone(),
+            test1.disconnections.lock().unwrap().clone(),
         );
         check(
             vec![p2_name.clone()],
-            peer3_disconnections.lock().unwrap().clone(),
+            test3.disconnections.lock().unwrap().clone(),
         );
 
         // Disconnection with peer
         block_on(peer1.disconnect_to(p3_name.clone()));
-        wait_while_condition(&|| peer3_disconnections.lock().unwrap().len() < 2);
+        wait_while_condition(&|| test3.disconnections.lock().unwrap().len() < 2);
         check(
             vec![p1_name.clone(), p2_name.clone()],
-            peer3_disconnections.lock().unwrap().clone(),
+            test3.disconnections.lock().unwrap().clone(),
         );
     }
 }

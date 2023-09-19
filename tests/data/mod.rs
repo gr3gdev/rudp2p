@@ -1,18 +1,23 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
 use cucumber::{gherkin::Step, World};
 use futures::{executor::block_on, future::LocalBoxFuture, FutureExt};
-use log::debug;
 use r2d2_sqlite::SqliteConnectionManager;
-use rudp2plib::{configuration::Configuration, peer::*};
+use rudp2plib::{
+    configuration::Configuration,
+    network::{events::*, Response},
+    observer::Observer,
+    peer::*,
+};
 
 use crate::{
     dao::{
-        add_connection, add_disconnection, add_message, get_connection_for_peer,
-        get_disconnection_for_peer, get_message_for_peer, init, ConnectedEvent, DisconnectedEvent,
+        add_connection, add_disconnection, add_message, get_peer_messages_from, init,
+        is_peer_connected_with, is_peer_disconnected_with, ConnectedEvent, DisconnectedEvent,
         MessageEvent, Pool,
     },
-    utils::{get_time, read_file, wait_while_condition},
+    utils::{get_time, read_file},
 };
 
 #[derive(World, Debug)]
@@ -94,6 +99,50 @@ impl DataTable for Event {
     }
 }
 
+struct TestObserver {
+    pool: Pool,
+}
+
+#[async_trait]
+impl Observer for TestObserver {
+    async fn on_connected(&self, c: Connected) -> Option<Response> {
+        add_connection(
+            &self.pool,
+            ConnectedEvent {
+                from: c.from,
+                to: c.uid,
+            },
+        )
+        .await;
+        None
+    }
+
+    async fn on_disconnected(&self, d: Disconnected) -> Option<Response> {
+        add_disconnection(
+            &self.pool,
+            DisconnectedEvent {
+                from: d.from,
+                to: d.uid,
+            },
+        )
+        .await;
+        None
+    }
+
+    async fn on_message(&self, m: Message) -> Option<Response> {
+        add_message(
+            &self.pool,
+            MessageEvent {
+                from: m.from,
+                to: m.uid,
+                content: m.content,
+            },
+        )
+        .await;
+        None
+    }
+}
+
 impl PeersWorld {
     fn new() -> Self {
         let manager = SqliteConnectionManager::file("target/features.db");
@@ -112,47 +161,10 @@ impl PeersWorld {
                 .name(&peer_data.name)
                 .share_connections(true)
                 .build();
-            let pool_c = self.pool.clone();
-            let pool_d = self.pool.clone();
-            let pool_m = self.pool.clone();
-            let peer = Peer::new(
-                conf,
-                move |c| {
-                    add_connection(
-                        &pool_c,
-                        ConnectedEvent {
-                            from: c.from,
-                            to: c.uid,
-                        },
-                    )
-                    .await;
-                    None
-                },
-                move |d| {
-                    add_disconnection(
-                        &pool_d,
-                        DisconnectedEvent {
-                            from: d.from,
-                            to: d.uid,
-                        },
-                    )
-                    .await;
-                    None
-                },
-                move |m| {
-                    add_message(
-                        &pool_m,
-                        MessageEvent {
-                            from: m.from,
-                            to: m.uid,
-                            content: m.content,
-                        },
-                    )
-                    .await;
-                    None
-                },
-            )
-            .await;
+            let test_observer = TestObserver {
+                pool: self.pool.clone(),
+            };
+            let peer = Peer::new(conf, test_observer).await;
             self.peers.push(peer);
         }
     }
@@ -186,38 +198,20 @@ impl PeersWorld {
         peer: String,
         events: Vec<Event>,
         type_event: String,
-    ) -> bool {
+    ) -> () {
         if type_event == "CONNECTED" {
-            let connections = get_connection_for_peer(&self.pool, &peer).await;
-            debug!(
-                "Check {peer} connected with {:?} - {:?}",
-                events, connections
-            );
-            events
-                .iter()
-                .all(|e| connections.iter().any(|c| c.from == e.from))
+            for e in events {
+                assert!(is_peer_connected_with(&self.pool, &peer, &e.from).await);
+            }
         } else if type_event == "DISCONNECTED" {
-            let disconnections = get_disconnection_for_peer(&self.pool, &peer).await;
-            debug!(
-                "Check {peer} disconnected with {:?} - {:?}",
-                events, disconnections
-            );
-            events
-                .iter()
-                .all(|e| disconnections.iter().any(|d| d.from == e.from))
+            for e in events {
+                assert!(is_peer_disconnected_with(&self.pool, &peer, &e.from).await);
+            }
         } else if type_event == "MESSAGE" {
-            let messages = get_message_for_peer(&self.pool, &peer).await;
-            debug!(
-                "Check {peer} receive messages {:?} - {:?}",
-                events, messages
-            );
-            events.iter().all(|e| {
-                messages
-                    .iter()
-                    .any(|m| m.from == e.from && m.content == e.content)
-            })
-        } else {
-            false
+            for e in events {
+                let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
+                assert!(messages.iter().any(|m| m.content == e.content));
+            }
         }
     }
 
@@ -226,27 +220,21 @@ impl PeersWorld {
         peer: String,
         events: Vec<Event>,
         type_event: String,
-    ) -> bool {
+    ) -> () {
         std::thread::sleep(Duration::from_millis(1000));
         if type_event == "CONNECTED" {
-            let connections = get_connection_for_peer(&self.pool, &peer).await;
-            events
-                .iter()
-                .all(|e| connections.iter().all(|c| c.from != e.from))
+            for e in events {
+                assert!(!is_peer_connected_with(&self.pool, &peer, &e.from).await);
+            }
         } else if type_event == "DISCONNECTED" {
-            let disconnections = get_disconnection_for_peer(&self.pool, &peer).await;
-            events
-                .iter()
-                .all(|e| disconnections.iter().all(|d| d.from != e.from))
+            for e in events {
+                assert!(!is_peer_disconnected_with(&self.pool, &peer, &e.from).await);
+            }
         } else if type_event == "MESSAGE" {
-            let messages = get_message_for_peer(&self.pool, &peer).await;
-            events.iter().all(|e| {
-                messages
-                    .iter()
-                    .all(|m| m.from != e.from && m.content != e.content)
-            })
-        } else {
-            false
+            for e in events {
+                let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
+                assert!(messages.iter().all(|m| m.content != e.content));
+            }
         }
     }
 }

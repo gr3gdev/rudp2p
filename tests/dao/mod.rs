@@ -87,20 +87,13 @@ pub(crate) async fn add_connection(pool: &Pool, c: ConnectedEvent) -> usize {
         .unwrap()
 }
 
-pub(crate) async fn get_connection_for_peer(pool: &Pool, peer: &String) -> Vec<ConnectedEvent> {
+pub(crate) async fn is_peer_connected_with(pool: &Pool, peer: &String, other: &String) -> bool {
     let connection = get_connection(pool).await;
     let mut statement = connection
-        .prepare("SELECT from_peer, to_peer FROM connections WHERE to_peer = ?1")
+        .prepare("SELECT 1 FROM connections WHERE to_peer = ?1 AND from_peer = ?2")
         .expect("Unable to prepare query : get_connection_for_peer");
-    statement
-        .query_map([peer], |row| {
-            Ok(ConnectedEvent {
-                from: row.get(0).unwrap(),
-                to: row.get(1).unwrap(),
-            })
-        })
-        .and_then(Iterator::collect)
-        .unwrap()
+    let mut rows = statement.query((peer, other)).unwrap();
+    rows.next().unwrap().is_some()
 }
 
 pub(crate) async fn add_disconnection(pool: &Pool, d: DisconnectedEvent) -> usize {
@@ -113,23 +106,13 @@ pub(crate) async fn add_disconnection(pool: &Pool, d: DisconnectedEvent) -> usiz
         .unwrap()
 }
 
-pub(crate) async fn get_disconnection_for_peer(
-    pool: &Pool,
-    peer: &String,
-) -> Vec<DisconnectedEvent> {
+pub(crate) async fn is_peer_disconnected_with(pool: &Pool, peer: &String, other: &String) -> bool {
     let connection = get_connection(pool).await;
     let mut statement = connection
-        .prepare("SELECT from_peer, to_peer FROM disconnections WHERE to_peer = ?1")
-        .expect("Unable to prepare query : get_disconnection_for_peer");
-    statement
-        .query_map([peer], |row| {
-            Ok(DisconnectedEvent {
-                from: row.get(0).unwrap(),
-                to: row.get(1).unwrap(),
-            })
-        })
-        .and_then(Iterator::collect)
-        .unwrap()
+        .prepare("SELECT 1 FROM disconnections WHERE to_peer = ?1 AND from_peer = ?2")
+        .expect("Unable to prepare query : get_connection_for_peer");
+    let mut rows = statement.query((peer, other)).unwrap();
+    rows.next().unwrap().is_some()
 }
 
 pub(crate) async fn add_message(pool: &Pool, m: MessageEvent) -> usize {
@@ -142,13 +125,13 @@ pub(crate) async fn add_message(pool: &Pool, m: MessageEvent) -> usize {
         .unwrap()
 }
 
-pub(crate) async fn get_message_for_peer(pool: &Pool, peer: &String) -> Vec<MessageEvent> {
+pub(crate) async fn get_peer_messages_from(pool: &Pool, peer: &String, from: &String) -> Vec<MessageEvent> {
     let connection = get_connection(pool).await;
     let mut statement = connection
-        .prepare("SELECT from_peer, to_peer, content FROM messages WHERE to_peer = ?1")
+        .prepare("SELECT from_peer, to_peer, content FROM messages WHERE to_peer = ?1 AND from_peer = ?2")
         .expect("Unable to prepare query : get_message_for_peer");
     statement
-        .query_map([peer], |row| {
+        .query_map((peer, from), |row| {
             Ok(MessageEvent {
                 from: row.get(0).unwrap(),
                 to: row.get(1).unwrap(),

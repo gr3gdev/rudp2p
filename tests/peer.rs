@@ -81,7 +81,9 @@ async fn not_receive_event(world: &mut PeersWorld, peer_name: String, step: &Ste
     let events_by_type = group_event_by_type(events);
     for (event_type, events) in events_by_type {
         if !events.is_empty() {
-            world.check_peer_not_receive(peer_name.clone(), events, event_type).await;
+            world
+                .check_peer_not_receive(peer_name.clone(), events, event_type)
+                .await;
         }
     }
 }
@@ -92,7 +94,9 @@ async fn receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
     let events_by_type = group_event_by_type(events);
     for (event_type, events) in events_by_type {
         if !events.is_empty() {
-            world.check_peer_receive(peer_name.clone(), events, event_type).await;
+            world
+                .check_peer_receive(peer_name.clone(), events, event_type)
+                .await;
         }
     }
 }

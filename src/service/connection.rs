@@ -1,15 +1,13 @@
 use log::debug;
-use std::{
-    net::{SocketAddr, UdpSocket},
-    sync::{Arc, Mutex},
-};
+use std::net::{SocketAddr, UdpSocket};
 
 use crate::{
     dao::{
         remote::{self, RemotePeer},
         Pool,
     },
-    network::{events::Connected, Request, Response},
+    network::{Request, Response},
+    observer::Observer,
 };
 
 pub(crate) struct ConnectionService;
@@ -32,7 +30,7 @@ fn share_connection(
 }
 
 impl ConnectionService {
-    pub(crate) async fn execute<C>(
+    pub(crate) async fn execute<O>(
         pool: &Pool,
         socket: &UdpSocket,
         request: &Request,
@@ -41,10 +39,10 @@ impl ConnectionService {
         remote_addr: &SocketAddr,
         connected_peers: &Vec<RemotePeer>,
         share_connections: bool,
-        on_connected: Arc<Mutex<Box<C>>>,
+        mut observer: O,
     ) -> (Option<Response>, Vec<u8>)
     where
-        C: FnMut(Connected) -> Option<Response>,
+        O: Observer,
     {
         let connection = request.to_connected_event(peer_uid, remote_addr);
         if remote::select_by_uid(pool, &connection.from)
@@ -69,9 +67,8 @@ impl ConnectionService {
                 &remote_addr,
                 &vec![],
             );
-            let mut on_connected = on_connected.lock().unwrap();
             debug!("Peer {peer_uid} - Fire event {:?}", connection);
-            (on_connected(connection), vec![])
+            (observer.on_connected(connection).await, vec![])
         } else {
             (None, vec![])
         }

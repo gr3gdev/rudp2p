@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
-use std::time::{Duration, SystemTime};
-use std::{env, fs, thread};
+use std::time::SystemTime;
+use std::{env, fs};
 
 pub(crate) fn read_file(file: &str) -> Vec<u8> {
     let current_dir = env::current_dir().unwrap();
@@ -19,16 +19,4 @@ pub(crate) fn get_time() -> u128 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_millis()
-}
-
-pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) -> bool {
-    let start = get_time();
-    while condition() {
-        thread::sleep(Duration::from_millis(1000));
-        let current = get_time();
-        if current - start > 5000 {
-            break;
-        }
-    }
-    condition()
 }
