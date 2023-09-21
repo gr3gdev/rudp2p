@@ -1,13 +1,14 @@
 use log::debug;
-use std::net::{SocketAddr, UdpSocket};
+use std::{
+    net::{SocketAddr, UdpSocket},
+    sync::{Arc, Mutex},
+};
 
 use crate::{
-    dao::{
-        remote::{self, RemotePeer},
-        Pool,
-    },
+    dao::remote::{self, RemotePeer},
     network::{Request, Response},
     observer::Observer,
+    thread::PeerInstance,
 };
 
 pub(crate) struct ConnectionService;
@@ -22,7 +23,7 @@ fn share_connection(
     if share_connections {
         let req = Request::new_share_connection(connected_peers);
         debug!(
-            "Peer {peer_uid} - share connection {:?} with {}",
+            "[PEER {peer_uid}] share connection {:?} with {}",
             connected_peers, addr
         );
         req.send(socket, &addr, &vec![]);
@@ -31,44 +32,43 @@ fn share_connection(
 
 impl ConnectionService {
     pub(crate) async fn execute<O>(
-        pool: &Pool,
-        socket: &UdpSocket,
+        instance: &PeerInstance,
         request: &Request,
-        peer_uid: &String,
-        public_key: &Vec<u8>,
         remote_addr: &SocketAddr,
-        connected_peers: &Vec<RemotePeer>,
-        share_connections: bool,
-        mut observer: O,
+        observer: Arc<Mutex<O>>,
     ) -> (Option<Response>, Vec<u8>)
     where
         O: Observer,
     {
-        let connection = request.to_connected_event(peer_uid, remote_addr);
-        if remote::select_by_uid(pool, &connection.from)
+        let connected_peers = remote::select_all(&instance.uid, &instance.pool).await;
+        let connection = request.to_connected_event(&instance.uid, remote_addr);
+        if remote::select_by_uid(&instance.uid, &instance.pool, &connection.from)
             .await
             .is_empty()
         {
-            debug!("Peer {peer_uid} - CONNECTION from {}", remote_addr);
+            debug!("[PEER {}] CONNECTION from {}", instance.uid, remote_addr);
             // Share connection ?
             share_connection(
-                peer_uid,
-                socket,
+                &instance.uid,
+                &instance.socket,
                 remote_addr,
-                connected_peers,
-                share_connections,
+                &connected_peers,
+                instance.configuration.share_connections,
             );
             // Cache the connection with address and public key
-            let remote = RemotePeer::new(connection.clone());
-            remote::add(pool, &remote).await;
+            let remote = RemotePeer::new(&connection);
+            remote::add(&instance.uid, &instance.pool, &remote).await;
             // Send connection to remote too
-            Request::new_connection(peer_uid.clone(), public_key.clone()).send(
-                socket,
+            Request::new_connection(&instance.uid, &instance.public_key).send(
+                &instance.socket,
                 &remote_addr,
                 &vec![],
             );
-            debug!("Peer {peer_uid} - Fire event {:?}", connection);
-            (observer.on_connected(connection).await, vec![])
+            debug!("[PEER {}] Fire event {:?}", instance.uid, connection);
+            (
+                observer.lock().unwrap().on_connected(connection).await,
+                vec![],
+            )
         } else {
             (None, vec![])
         }

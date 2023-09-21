@@ -102,7 +102,13 @@ async fn receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
 }
 
 fn main() {
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .format_timestamp(Some(env_logger::TimestampPrecision::Millis))
+        .format_indent(Some(2))
+        .format_module_path(false)
+        .format_target(false)
+        .init();
     futures::executor::block_on(
         PeersWorld::cucumber()
             .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())

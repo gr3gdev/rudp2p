@@ -1,12 +1,10 @@
-use log::{debug, error};
-use std::{cmp::Ordering, fmt::Debug};
-
+use super::*;
 use crate::{
     network::request::Type,
     utils::{decoder::Decoder, encoder::Encoder},
 };
-
-use super::*;
+use log::{error, trace};
+use std::{cmp::Ordering, fmt::Debug, net::SocketAddr};
 
 #[derive(Clone, Eq, PartialEq, Ord)]
 pub(crate) struct RequestPart {
@@ -16,6 +14,7 @@ pub(crate) struct RequestPart {
     pub(crate) total: usize,
     pub(crate) content_size: usize,
     pub(crate) content: Vec<u8>,
+    pub(crate) sender: SocketAddr,
 }
 
 impl Debug for RequestPart {
@@ -26,6 +25,7 @@ impl Debug for RequestPart {
             .field("start", &self.start)
             .field("total", &self.total)
             .field("content_size", &self.content_size)
+            .field("sender", &self.sender)
             .finish()
     }
 }
@@ -42,11 +42,11 @@ impl RequestPart {
         data
     }
 
-    pub(crate) fn parse(data: Vec<u8>) -> Self {
+    pub(crate) fn parse(data: Vec<u8>, addr: SocketAddr) -> Self {
         let request_type = Type::from_code(data[0]);
         let (uid_size, next_index) = Decoder::get_size(&data, 1);
-        let uid =
-            String::from_utf8(data[next_index..next_index + uid_size].to_vec()).expect("Unable to read the UID");
+        let uid = String::from_utf8(data[next_index..next_index + uid_size].to_vec())
+            .expect("Unable to read the UID");
         let (start, next_index) = Decoder::get_size(&data, next_index + uid_size);
         let (total, next_index) = Decoder::get_size(&data, next_index);
         let (content_size, next_index) = Decoder::get_size(&data, next_index);
@@ -57,6 +57,7 @@ impl RequestPart {
             total,
             content_size,
             content: data[next_index..].to_vec(),
+            sender: addr,
         }
     }
 }
@@ -84,7 +85,8 @@ pub(crate) async fn create_or_upgrade(connection: &Connection) {
         start INTEGER,
         total INTEGER,
         content_size INTEGER,
-        content TEXT
+        content TEXT,
+        sender TEXT
     )",
             [],
         )
@@ -98,6 +100,7 @@ fn mapper(row: &rusqlite::Row<'_>) -> RequestPart {
     let total = row.get(3).expect("Unable to read 'total'");
     let content_size = row.get(4).expect("Unable to read 'content_size'");
     let content = row.get(5).expect("Unable to read 'content'");
+    let sender: String = row.get(6).expect("Unable to read 'sender'");
     RequestPart {
         uid,
         request_type,
@@ -105,18 +108,26 @@ fn mapper(row: &rusqlite::Row<'_>) -> RequestPart {
         total,
         content_size,
         content,
+        sender: sender.parse().unwrap(),
     }
 }
 
-pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RequestPart> {
+pub(crate) async fn select_by_uid(
+    peer_uid: &String,
+    pool: &Pool,
+    uid: &String,
+) -> Vec<RequestPart> {
     let connection = get_connection(pool).await;
     let mut statement = connection
-        .prepare("SELECT uid, type, start, total, content_size, content FROM request_part WHERE uid = ?1")
+        .prepare("SELECT DISTINCT uid, type, start, total, content_size, content, sender FROM request_part WHERE uid = ?1",)
         .expect("Unable to prepare query : select_by_uid");
     statement
         .query_map([uid], |row| {
             let part = mapper(row);
-            debug!("select_by_uid({}) = {:?}", uid, part);
+            trace!(
+                "[PEER {peer_uid}] [DAO] part::select_by_uid({uid}) = {:?}",
+                part
+            );
             Ok(part)
         })
         .and_then(Iterator::collect)
@@ -126,15 +137,15 @@ pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RequestPart>
         })
 }
 
-pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
+pub(crate) async fn add(peer_uid: &String, pool: &Pool, part: &RequestPart) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute(
-            "INSERT INTO request_part (uid, type, start, total, content_size, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (part.uid.clone(), part.request_type.clone(), part.start, part.total, part.content_size, part.content.clone()),
+            "INSERT INTO request_part (uid, type, start, total, content_size, content, sender) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (part.uid.clone(), part.request_type.clone(), part.start, part.total, part.content_size, part.content.clone(), part.sender.to_string()),
         )
         .and_then(|nb| {
-            debug!("add({:?}) = {}", part, nb);
+            trace!("[PEER {peer_uid}] [DAO] part::add({:?}) = {}", part, nb);
             Ok(nb)
         })
         .unwrap_or_else(|e| {
@@ -143,12 +154,15 @@ pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
         })
 }
 
-pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
+pub(crate) async fn remove_by_uid(peer_uid: &String, pool: &Pool, uid: &String) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute("DELETE FROM request_part WHERE uid = ?1", [uid])
         .and_then(|nb| {
-            debug!("remove_by_uid({}) = {}", uid, nb);
+            trace!(
+                "[PEER {peer_uid}] [DAO] part::remove_by_uid({}) = {}",
+                uid, nb
+            );
             Ok(nb)
         })
         .unwrap_or_else(|e| {
@@ -159,13 +173,13 @@ pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::network::request::Type;
-
     use super::RequestPart;
+    use crate::network::request::Type;
 
     #[test]
     fn parse() {
         let content = "This is a content for test".as_bytes().to_vec();
+        let address = "127.0.0.1:9999".parse().unwrap();
         let part = RequestPart {
             uid: String::from("PART4TEST"),
             request_type: Type::Connection,
@@ -173,9 +187,10 @@ mod tests {
             total: 256,
             content_size: content.len(),
             content,
+            sender: address,
         };
         let data = part.to_data();
-        let parse = RequestPart::parse(data);
+        let parse = RequestPart::parse(data, address);
         assert_eq!(part, parse);
     }
 }

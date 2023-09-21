@@ -1,10 +1,7 @@
-use std::{fmt::Debug, net::SocketAddr};
-
 use super::*;
-
 use crate::network::events::Connected;
-
-use log::{debug, error};
+use log::{error, trace};
+use std::{fmt::Debug, net::SocketAddr};
 
 #[derive(Clone)]
 pub(crate) struct RemotePeer {
@@ -23,11 +20,11 @@ impl Debug for RemotePeer {
 }
 
 impl RemotePeer {
-    pub(crate) fn new(connected: Connected) -> Self {
+    pub(crate) fn new(connected: &Connected) -> Self {
         Self {
-            name: connected.from,
+            name: connected.from.clone(),
             addr: connected.address,
-            public_key: connected.public_key,
+            public_key: connected.public_key.clone(),
         }
     }
 }
@@ -57,7 +54,7 @@ fn mapper(row: &rusqlite::Row<'_>) -> RemotePeer {
     }
 }
 
-pub(crate) async fn select_all(pool: &Pool) -> Vec<RemotePeer> {
+pub(crate) async fn select_all(peer_uid: &String, pool: &Pool) -> Vec<RemotePeer> {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT uid, address, public_key FROM remote_peer")
@@ -65,7 +62,10 @@ pub(crate) async fn select_all(pool: &Pool) -> Vec<RemotePeer> {
     statement
         .query_map([], |row| {
             let remote = mapper(row);
-            debug!("select_all() = {:?}", remote);
+            trace!(
+                "[PEER {peer_uid}] [DAO] remote::select_all() = {:?}",
+                remote
+            );
             Ok(remote)
         })
         .and_then(Iterator::collect)
@@ -75,7 +75,7 @@ pub(crate) async fn select_all(pool: &Pool) -> Vec<RemotePeer> {
         })
 }
 
-pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RemotePeer> {
+pub(crate) async fn select_by_uid(peer_uid: &String, pool: &Pool, uid: &String) -> Vec<RemotePeer> {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT uid, address, public_key FROM remote_peer WHERE uid = ?1")
@@ -83,7 +83,10 @@ pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RemotePeer> 
     statement
         .query_map([uid], |row| {
             let remote = mapper(row);
-            debug!("select_by_uid({}) = {:?}", uid, remote);
+            trace!(
+                "[PEER {peer_uid}] [DAO] remote::select_by_uid({uid}) = {:?}",
+                remote
+            );
             Ok(remote)
         })
         .and_then(Iterator::collect)
@@ -93,9 +96,36 @@ pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RemotePeer> 
         })
 }
 
-pub(crate) async fn add(pool: &Pool, remote: &RemotePeer) -> usize {
+pub(crate) async fn select_by_address(
+    peer_uid: &String,
+    pool: &Pool,
+    address: &SocketAddr,
+) -> RemotePeer {
+    let connection = get_connection(pool).await;
+    let mut statement = connection
+        .prepare("SELECT uid, address, public_key FROM remote_peer WHERE address = ?1")
+        .expect("Unable to prepare query : select_by_uid");
+    let list = statement
+        .query_map([address.to_string()], |row| {
+            let remote = mapper(row);
+            trace!(
+                "[PEER {peer_uid}] [DAO] remote::select_by_address({address}) = {:?}",
+                remote
+            );
+            Ok(remote)
+        })
+        .and_then(Iterator::collect)
+        .unwrap_or_else(|e| {
+            error!("{e}");
+            vec![]
+        });
+    list.get(0).unwrap().clone()
+}
+
+pub(crate) async fn add(peer_uid: &String, pool: &Pool, remote: &RemotePeer) -> usize {
     let address = remote.addr.to_string();
-    let public_key = String::from_utf8(remote.public_key.clone()).expect("Unable to read public key");
+    let public_key =
+        String::from_utf8(remote.public_key.clone()).expect("Unable to read public key");
     let connection = get_connection(pool).await;
     connection
         .execute(
@@ -103,7 +133,7 @@ pub(crate) async fn add(pool: &Pool, remote: &RemotePeer) -> usize {
             (remote.name.clone(), address, public_key),
         )
         .and_then(|nb| {
-            debug!("add({:?}) = {}", remote, nb);
+            trace!("[PEER {peer_uid}] [DAO] remote::add({:?}) = {nb}", remote);
             Ok(nb)
         })
         .unwrap_or_else(|e| {
@@ -112,12 +142,12 @@ pub(crate) async fn add(pool: &Pool, remote: &RemotePeer) -> usize {
         })
 }
 
-pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
+pub(crate) async fn remove_by_uid(peer_uid: &String, pool: &Pool, uid: &String) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute("DELETE FROM remote_peer WHERE uid = ?1", [uid])
         .and_then(|nb| {
-            debug!("remove_by_uid({}) = {}", uid, nb);
+            trace!("[PEER {peer_uid}] [DAO] remote::remove_by_uid({uid}) = {nb}");
             Ok(nb)
         })
         .unwrap_or_else(|e| {

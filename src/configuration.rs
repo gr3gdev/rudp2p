@@ -2,7 +2,7 @@ use self::builder::ConfigurationBuilder;
 
 mod builder;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Configuration {
     pub(crate) port: u16,
     pub(crate) name: Option<String>,

@@ -1,3 +1,4 @@
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 pub(crate) type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
@@ -125,18 +126,27 @@ pub(crate) async fn add_message(pool: &Pool, m: MessageEvent) -> usize {
         .unwrap()
 }
 
-pub(crate) async fn get_peer_messages_from(pool: &Pool, peer: &String, from: &String) -> Vec<MessageEvent> {
+pub(crate) async fn get_peer_messages_from(
+    pool: &Pool,
+    peer: &String,
+    from: &String,
+) -> Vec<MessageEvent> {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT from_peer, to_peer, content FROM messages WHERE to_peer = ?1 AND from_peer = ?2")
         .expect("Unable to prepare query : get_message_for_peer");
     statement
         .query_map((peer, from), |row| {
-            Ok(MessageEvent {
+            let message = MessageEvent {
                 from: row.get(0).unwrap(),
                 to: row.get(1).unwrap(),
                 content: row.get(2).unwrap(),
-            })
+            };
+            debug!(
+                "[PEER {peer}] \x1b[33m[TEST]\x1b[0m get_peer_messages_from({from}) : {:?}",
+                message
+            );
+            Ok(message)
         })
         .and_then(Iterator::collect)
         .unwrap()

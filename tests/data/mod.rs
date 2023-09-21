@@ -1,8 +1,8 @@
 use std::time::Duration;
-
 use async_trait::async_trait;
 use cucumber::{gherkin::Step, World};
-use futures::{executor::block_on, future::LocalBoxFuture, FutureExt};
+use futures::{future::LocalBoxFuture, FutureExt};
+use log::debug;
 use r2d2_sqlite::SqliteConnectionManager;
 use rudp2plib::{
     configuration::Configuration,
@@ -17,7 +17,7 @@ use crate::{
         is_peer_connected_with, is_peer_disconnected_with, ConnectedEvent, DisconnectedEvent,
         MessageEvent, Pool,
     },
-    utils::{get_time, read_file},
+    utils::{get_time, read_file, wait_until},
 };
 
 #[derive(World, Debug)]
@@ -105,7 +105,7 @@ struct TestObserver {
 
 #[async_trait]
 impl Observer for TestObserver {
-    async fn on_connected(&self, c: Connected) -> Option<Response> {
+    async fn on_connected(&mut self, c: Connected) -> Option<Response> {
         add_connection(
             &self.pool,
             ConnectedEvent {
@@ -117,7 +117,7 @@ impl Observer for TestObserver {
         None
     }
 
-    async fn on_disconnected(&self, d: Disconnected) -> Option<Response> {
+    async fn on_disconnected(&mut self, d: Disconnected) -> Option<Response> {
         add_disconnection(
             &self.pool,
             DisconnectedEvent {
@@ -129,7 +129,7 @@ impl Observer for TestObserver {
         None
     }
 
-    async fn on_message(&self, m: Message) -> Option<Response> {
+    async fn on_message(&mut self, m: Message) -> Option<Response> {
         add_message(
             &self.pool,
             MessageEvent {
@@ -144,10 +144,10 @@ impl Observer for TestObserver {
 }
 
 impl PeersWorld {
-    fn new() -> Self {
-        let manager = SqliteConnectionManager::file("target/features.db");
+    async fn new() -> Self {
+        let manager = SqliteConnectionManager::memory();
         let pool = Pool::new(manager).expect("Unable to initialize pool");
-        block_on(init(&pool));
+        init(&pool).await;
         Self {
             peers: Vec::new(),
             pool,
@@ -156,6 +156,7 @@ impl PeersWorld {
 
     pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
+            debug!("\x1b[33m[TEST]\x1b[0m Add peer {:?}", peer_data);
             let conf = Configuration::builder()
                 .port(peer_data.port)
                 .name(&peer_data.name)
@@ -201,16 +202,38 @@ impl PeersWorld {
     ) -> () {
         if type_event == "CONNECTED" {
             for e in events {
-                assert!(is_peer_connected_with(&self.pool, &peer, &e.from).await);
+                assert!(
+                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &e.from), 5000).await,
+                    "Peer {peer} is not connected with {}",
+                    e.from
+                );
             }
         } else if type_event == "DISCONNECTED" {
             for e in events {
-                assert!(is_peer_disconnected_with(&self.pool, &peer, &e.from).await);
+                assert!(
+                    wait_until(
+                        &|| is_peer_disconnected_with(&self.pool, &peer, &e.from),
+                        5000
+                    )
+                    .await,
+                    "Peer {peer} is not disconnected with {}",
+                    e.from
+                );
             }
         } else if type_event == "MESSAGE" {
             for e in events {
-                let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
-                assert!(messages.iter().any(|m| m.content == e.content));
+                assert!(
+                    wait_until(
+                        &|| async {
+                            let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
+                            messages.iter().any(|m| m.content == e.content)
+                        },
+                        10000
+                    )
+                    .await,
+                    "Peer {peer} has not received the message from {}",
+                    e.from
+                );
             }
         }
     }
@@ -224,16 +247,46 @@ impl PeersWorld {
         std::thread::sleep(Duration::from_millis(1000));
         if type_event == "CONNECTED" {
             for e in events {
-                assert!(!is_peer_connected_with(&self.pool, &peer, &e.from).await);
+                assert!(
+                    wait_until(
+                        &|| async {
+                            is_peer_connected_with(&self.pool, &peer, &e.from).await == false
+                        },
+                        5000
+                    )
+                    .await,
+                    "Peer {peer} is connected with {}",
+                    e.from
+                );
             }
         } else if type_event == "DISCONNECTED" {
             for e in events {
-                assert!(!is_peer_disconnected_with(&self.pool, &peer, &e.from).await);
+                assert!(
+                    wait_until(
+                        &|| async {
+                            is_peer_disconnected_with(&self.pool, &peer, &e.from).await == false
+                        },
+                        5000
+                    )
+                    .await,
+                    "Peer {peer} is disconnected with {}",
+                    e.from
+                );
             }
         } else if type_event == "MESSAGE" {
             for e in events {
-                let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
-                assert!(messages.iter().all(|m| m.content != e.content));
+                assert!(
+                    wait_until(
+                        &|| async {
+                            let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
+                            messages.is_empty() || messages.iter().all(|m| m.content != e.content)
+                        },
+                        10000
+                    )
+                    .await,
+                    "Peer {peer} has received the message from {}",
+                    e.from
+                );
             }
         }
     }

@@ -63,17 +63,17 @@ impl Request {
         }
     }
 
-    pub(crate) fn new_connection(peer_name: String, public_key: Vec<u8>) -> Self {
+    pub(crate) fn new_connection(peer_name: &String, public_key: &Vec<u8>) -> Self {
         let content = Vec::new();
         let content = Encoder::add_with_size(content, peer_name.as_bytes().to_vec());
-        let content = Encoder::add_with_size(content, public_key);
+        let content = Encoder::add_with_size(content, public_key.clone());
         Self {
             request_type: Type::Connection,
             content,
         }
     }
 
-    pub(crate) fn new_disconnection(peer_name: String) -> Self {
+    pub(crate) fn new_disconnection(peer_name: &String) -> Self {
         let content = Vec::new();
         let content = Encoder::add(content, peer_name.as_bytes().to_vec());
         Self {
@@ -82,7 +82,7 @@ impl Request {
         }
     }
 
-    pub(crate) fn new_message(peer_name: String, data: Vec<u8>) -> Self {
+    pub(crate) fn new_message(peer_name: &String, data: &Vec<u8>) -> Self {
         let mut content = Encoder::add_with_size(Vec::new(), peer_name.as_bytes().to_vec());
         content.append(&mut data.clone());
         Self {
@@ -166,7 +166,7 @@ impl Request {
     }
 
     pub(crate) fn send(&self, socket: &UdpSocket, addr: &SocketAddr, public_key: &Vec<u8>) -> () {
-        let parts = Multipart::split(self, public_key);
+        let parts = Multipart::split(self, public_key, addr);
         for part in parts {
             socket.send_to(&part.to_data(), addr).unwrap_or_else(|e| {
                 error!("Unable to send request : {e}");
@@ -190,7 +190,7 @@ impl Response {
         }
     }
 
-    pub(crate) fn to_request(&self, peer_name: String) -> Request {
-        Request::new_message(peer_name, self.data.clone())
+    pub(crate) fn to_request(&self, peer_name: &String) -> Request {
+        Request::new_message(&peer_name, &self.data)
     }
 }

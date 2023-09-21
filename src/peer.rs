@@ -1,29 +1,19 @@
-use log::{debug, error, info};
-use openssl::rsa::Rsa;
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use std::{
-    fmt::Debug,
-    net::{IpAddr, SocketAddr, UdpSocket},
-};
-
 use crate::{
     configuration::Configuration,
     dao::{
-        block, create_or_upgrade_db,
+        block,
         remote::{self, RemotePeer},
         thread,
     },
     network::*,
     observer::Observer,
-    thread::{start_job, stop_job},
-    utils::generate_uid,
+    thread::{start_socket_job, stop_job},
 };
-
-/// Build an uid with timestamp (in nano seconds)
-fn build_uid(uid: Option<String>) -> String {
-    uid.unwrap_or_else(|| generate_uid("P"))
-}
+use log::{debug, error, info};
+use std::{
+    fmt::Debug,
+    net::{IpAddr, SocketAddr, UdpSocket},
+};
 
 /// # Peer
 ///
@@ -39,13 +29,13 @@ fn build_uid(uid: Option<String>) -> String {
 ///
 /// #[async_trait]
 /// impl Observer for MyObserver {
-///     async fn on_connected(&self, c: Connected) -> Option<Response> {
+///     async fn on_connected(&mut self, c: Connected) -> Option<Response> {
 ///         let mut text = String::from("Hello I am ");
 ///         text.push_str(&self.name);
 ///         Some(Response::text(&text))
 ///     }
 ///
-///     async fn on_disconnected(&self, d: Disconnected) -> Option<Response> {
+///     async fn on_disconnected(&mut self, d: Disconnected) -> Option<Response> {
 ///         Some(Response::text("Goodbye !"))
 ///     }
 ///
@@ -119,11 +109,6 @@ impl Peer {
     where
         O: Observer,
     {
-        // Init database
-        let manager = SqliteConnectionManager::memory();
-        let pool = Pool::new(manager).expect("Unable to initialize pool");
-        create_or_upgrade_db(&pool).await;
-
         // Get local IP
         let addr = "127.0.0.1"
             .parse::<IpAddr>()
@@ -141,84 +126,56 @@ impl Peer {
             })
             .unwrap();
 
-        // Generate SSL keys
-        let rsa = Rsa::generate(2048)
-            .or_else(|e| {
-                error!("Unable to generate SSL keys : {e}");
-                Err("Unable to generate SSL keys")
-            })
-            .unwrap();
-
-        // Public key PEM
-        let pk = rsa
-            .public_key_to_pem()
-            .or_else(|e| {
-                error!("Unable to generate public key : {e}");
-                Err("Unable to generate public key")
-            })
-            .unwrap();
-
-        let uid = build_uid(configuration.name);
-
-        // Start thread for send and receive messages
-        start_job(
-            &pool,
-            uid.clone(),
-            socket.try_clone().expect("Unable to clone socket"),
-            rsa,
-            pk.clone(),
-            configuration.share_connections,
-            observer,
-        )
-        .await;
+        // Start thread for processing messages
+        let instance = start_socket_job(&configuration, &socket, observer).await;
 
         // Return Peer
         Peer {
-            uid,
+            uid: instance.uid,
             udp_socket: socket,
-            public_key_pem: pk,
-            pool,
+            public_key_pem: instance.public_key,
+            pool: instance.pool,
         }
     }
 
     pub async fn is_alive(&self) -> bool {
-        thread::status(&self.pool).await
+        thread::status(&self.uid, &self.pool).await
     }
 
     pub fn connect_to(&self, addr: SocketAddr) -> () {
-        info!("Peer {} connect to {}", self.uid, addr);
-        let request = Request::new_connection(self.uid.clone(), self.public_key_pem.clone());
+        info!("[PEER {}] connect to {}", self.uid, addr);
+        let request = Request::new_connection(&self.uid, &self.public_key_pem);
         request.send(&self.udp_socket, &addr, &vec![]);
     }
 
     fn send(&self, request: Request, remote_peers: Vec<RemotePeer>) -> () {
         for remote in remote_peers {
-            debug!("Peer {} send {:?} to {:?}", self.uid, request, remote);
+            debug!("[PEER {}] send {:?} to {:?}", self.uid, request, remote);
             request.send(&self.udp_socket, &remote.addr, &remote.public_key);
         }
     }
 
     pub async fn send_to(&self, request: Request, peer: String) -> () {
-        let request = Request::new_message(self.uid.clone(), request.content);
-        let remote_peers = remote::select_by_uid(&self.pool, &peer).await;
+        let request = Request::new_message(&self.uid, &request.content);
+        let remote_peers = remote::select_by_uid(&self.uid, &self.pool, &peer).await;
         self.send(request, remote_peers);
     }
 
     pub async fn send_to_all(&self, request: Request) -> () {
-        let request = Request::new_message(self.uid.clone(), request.content);
-        let remote_peers = remote::select_all(&self.pool).await;
+        let request = Request::new_message(&self.uid, &request.content);
+        let remote_peers = remote::select_all(&self.uid, &self.pool).await;
         self.send(request, remote_peers);
     }
 
     pub async fn disconnect_to(&self, peer: String) -> () {
-        let request = Request::new_disconnection(self.uid.clone());
-        let remote_peers = remote::select_by_uid(&self.pool, &peer).await;
+        let request = Request::new_disconnection(&self.uid);
+        let remote_peers = remote::select_by_uid(&self.uid, &self.pool, &peer).await;
         self.send(request, remote_peers);
     }
 
     pub async fn disconnect_to_all(&self) -> () {
-        let request = Request::new_disconnection(self.uid.clone());
-        let remote_peers = remote::select_all(&self.pool).await;
+        let request = Request::new_disconnection(&self.uid);
+        let remote_peers = remote::select_all(&self.uid, &self.pool).await;
         self.send(request, remote_peers);
     }
 
@@ -227,9 +184,10 @@ impl Peer {
     }
 
     pub async fn block(&self, peer: String) -> () {
-        let remote_peers = remote::select_by_uid(&self.pool, &peer).await;
+        let remote_peers = remote::select_by_uid(&self.uid, &self.pool, &peer).await;
         for remote in remote_peers {
-            block::add(&self.pool, &remote.addr).await;
+            block::add(&self.uid, &self.pool, &remote.addr).await;
+            remote::remove_by_uid(&self.uid, &self.pool, &remote.name).await;
         }
     }
 
@@ -261,7 +219,7 @@ mod tests {
 
     use super::Peer;
 
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     struct Test {
         connections: Arc<Mutex<Vec<String>>>,
         disconnections: Arc<Mutex<Vec<String>>>,
@@ -301,11 +259,7 @@ mod tests {
             .name(name)
             .share_connections(true)
             .build();
-        let test = Test {
-            connections: Arc::new(Mutex::new(Vec::new())),
-            disconnections: Arc::new(Mutex::new(Vec::new())),
-            messages: Arc::new(Mutex::new(HashMap::new())),
-        };
+        let test = Test::default();
         let peer = block_on(Peer::new(conf, test.clone()));
         (peer, test)
     }

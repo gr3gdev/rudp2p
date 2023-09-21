@@ -1,32 +1,33 @@
 use log::debug;
-use std::net::SocketAddr;
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
+    dao::remote,
     network::{Request, Response},
     observer::Observer,
+    thread::PeerInstance,
 };
 
 pub(crate) struct MessageService;
 
 impl MessageService {
     pub(crate) async fn execute<O>(
+        instance: &PeerInstance,
         request: &Request,
-        peer_uid: &String,
         remote_addr: &SocketAddr,
-        remote_public_key: Option<Vec<u8>>,
-        mut observer: O,
+        observer: Arc<Mutex<O>>,
     ) -> (Option<Response>, Vec<u8>)
     where
         O: Observer,
     {
-        debug!("Peer {peer_uid} - MESSAGE from {}", remote_addr);
-        let message = request.to_message_event(peer_uid);
-        debug!("Peer {peer_uid} - Fire event {:?}", message);
-        let res = observer.on_message(message).await;
-        if let Some(pk) = remote_public_key {
-            (res, pk)
-        } else {
-            (res, vec![])
-        }
+        let remote = remote::select_by_address(&instance.uid, &instance.pool, remote_addr).await;
+        debug!("[PEER {}] MESSAGE from {}", instance.uid, remote_addr);
+        let message = request.to_message_event(&instance.uid);
+        debug!("[PEER {}] Fire event {:?}", instance.uid, message);
+        let res = observer.lock().unwrap().on_message(message).await;
+        (res, remote.public_key)
     }
 }

@@ -1,20 +1,19 @@
-use std::net::UdpSocket;
-
-use crate::network::{Request, Response};
+use crate::{
+    network::{Request, Response},
+    thread::PeerInstance,
+};
 
 pub(crate) struct ShareService;
 
 impl ShareService {
     pub(crate) async fn execute(
-        socket: &UdpSocket,
+        instance: &PeerInstance,
         request: &Request,
-        peer_uid: &String,
-        public_key: &Vec<u8>,
     ) -> (Option<Response>, Vec<u8>) {
         let remotes = request.to_peers_values();
         for remote in remotes {
-            let req = Request::new_connection(peer_uid.clone(), public_key.clone());
-            req.send(socket, &remote, &vec![]);
+            let req = Request::new_connection(&instance.uid, &instance.public_key);
+            req.send(&instance.socket, &remote, &vec![]);
         }
         (None, vec![])
     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::net::SocketAddr;
 
 use openssl::{pkey::Private, rsa::Rsa};
 
@@ -20,7 +20,11 @@ fn calculate_size(public_key: &Vec<u8>) -> usize {
 pub(crate) struct Multipart;
 
 impl Multipart {
-    pub(crate) fn split(request: &Request, public_key: &Vec<u8>) -> Vec<RequestPart> {
+    pub(crate) fn split(
+        request: &Request,
+        public_key: &Vec<u8>,
+        addr: &SocketAddr,
+    ) -> Vec<RequestPart> {
         let mut parts = Vec::new();
         let uid = generate_uid("R");
         let size = calculate_size(public_key);
@@ -44,21 +48,19 @@ impl Multipart {
                 total,
                 content_size,
                 content,
+                sender: addr.clone(),
             })
         }
         parts
     }
 
     pub(crate) fn merge(
-        parts: Vec<RequestPart>,
-        request_type: Type,
-        size: usize,
+        parts: &Vec<RequestPart>,
         private_key: &Rsa<Private>,
-    ) -> Option<Request> {
-        let mut seen = HashMap::new();
-        let mut parts = parts.clone();
-        parts.retain(|p| seen.insert(p.start, true).is_none());
-        parts.sort();
+    ) -> (Request, SocketAddr) {
+        let first = parts.get(0).unwrap();
+        let request_type = first.request_type.clone();
+        let addr = first.sender;
         let data = parts
             .iter()
             .flat_map(|p| {
@@ -69,14 +71,13 @@ impl Multipart {
                 }
             })
             .collect::<Vec<u8>>();
-        if data.len() == size {
-            Some(Request {
+        (
+            Request {
                 request_type,
                 content: data,
-            })
-        } else {
-            None
-        }
+            },
+            addr,
+        )
     }
 }
 
@@ -123,7 +124,8 @@ mod tests {
     fn split() {
         let (request, total) = create_test_request();
         let (_, pk) = generate_ssl();
-        let parts = Multipart::split(&request, &pk);
+        let address = "127.0.0.1:9999".parse().unwrap();
+        let parts = Multipart::split(&request, &pk, &address);
         assert_eq!(4, parts.len());
         check_part(parts.get(0).unwrap(), 0, total);
         check_part(parts.get(1).unwrap(), 128, total);
@@ -133,36 +135,12 @@ mod tests {
 
     #[test]
     fn merge() {
-        let (request, total) = create_test_request();
+        let (request, _) = create_test_request();
         let (rsa, pk) = generate_ssl();
-        let parts = Multipart::split(&request, &pk);
-        let merge = Multipart::merge(parts, request.request_type.clone(), total, &rsa);
-        assert!(merge.is_some());
-        if let Some(merge) = merge {
-            assert_eq!(request, merge);
-        }
-    }
-
-    #[test]
-    fn merge_incomplete() {
-        let (request, total) = create_test_request();
-        let (rsa, pk) = generate_ssl();
-        let mut parts = Multipart::split(&request, &pk);
-        parts.remove(parts.len() - 1);
-        let merge = Multipart::merge(parts, request.request_type.clone(), total, &rsa);
-        assert!(merge.is_none());
-    }
-
-    #[test]
-    fn merge_with_duplicate_parts() {
-        let (request, total) = create_test_request();
-        let (rsa, pk) = generate_ssl();
-        let mut parts = Multipart::split(&request, &pk);
-        parts.push(parts.get(1).unwrap().clone());
-        let merge = Multipart::merge(parts, request.request_type.clone(), total, &rsa);
-        assert!(merge.is_some());
-        if let Some(merge) = merge {
-            assert_eq!(request, merge);
-        }
+        let address = "127.0.0.1:9999".parse().unwrap();
+        let parts = Multipart::split(&request, &pk, &address);
+        let merge = Multipart::merge(&parts, &rsa);
+        assert_eq!(request, merge.0);
+        assert_eq!(address, merge.1);
     }
 }

@@ -1,8 +1,6 @@
-use std::net::SocketAddr;
-
-use log::{debug, error};
-
 use super::*;
+use log::{error, trace};
+use std::net::SocketAddr;
 
 pub(crate) async fn create_or_upgrade(connection: &Connection) {
     connection
@@ -17,7 +15,7 @@ pub(crate) async fn create_or_upgrade(connection: &Connection) {
         .expect("Unable to create table 'block_peer'");
 }
 
-pub(crate) async fn select_all(pool: &Pool) -> Vec<SocketAddr> {
+pub(crate) async fn select_all(peer_uid: &String, pool: &Pool) -> Vec<SocketAddr> {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT address FROM block_peer")
@@ -25,7 +23,10 @@ pub(crate) async fn select_all(pool: &Pool) -> Vec<SocketAddr> {
     statement
         .query_map([], |row| {
             let address: String = row.get(0).expect("Unable to read 'address'");
-            debug!("select_all() = {:?}", address);
+            trace!(
+                "[PEER {peer_uid}] [DAO] block::select_all() = {:?}",
+                address
+            );
             Ok(address.parse().expect("Unable to parse address"))
         })
         .and_then(Iterator::collect)
@@ -35,13 +36,13 @@ pub(crate) async fn select_all(pool: &Pool) -> Vec<SocketAddr> {
         })
 }
 
-pub(crate) async fn add(pool: &Pool, address: &SocketAddr) -> usize {
+pub(crate) async fn add(peer_uid: &String, pool: &Pool, address: &SocketAddr) -> usize {
     let address = &address.to_string();
     let connection = get_connection(pool).await;
     connection
         .execute("INSERT INTO block_peer (address) VALUES (?1)", [address])
         .and_then(|nb| {
-            debug!("add({:?}) = {}", address, nb);
+            trace!("[PEER {peer_uid}] [DAO] block::add({:?}) = {nb}", address);
             Ok(nb)
         })
         .unwrap_or_else(|e| {
