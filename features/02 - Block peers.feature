@@ -32,3 +32,8 @@ Feature: Block peers
     Then the peer "P2" does not receives
       | Event   | Content     | From |
       | MESSAGE | I am a peer | P1   |
+    When the peer "P1" unblocks the peer "P2"
+    And the peer "P1" sends "Hello" to all
+    Then the peer "P2" receives
+      | Event   | Content | From |
+      | MESSAGE | Hello   | P1   |

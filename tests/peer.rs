@@ -21,7 +21,7 @@ async fn connect_peer(world: &mut PeersWorld, from: String, to: String) {
     let peer1 = world.get_peer(&from);
     let peer2 = world.get_peer(&to);
     let peer2_addr = peer2.addr();
-    peer1.connect_to(peer2_addr.clone());
+    peer1.connect_to(&peer2_addr);
 }
 
 #[when(expr = "the peer {string} disconnects")]
@@ -59,6 +59,13 @@ async fn block_peer(world: &mut PeersWorld, peer_name: String, blocked_peer_name
     let peer = world.get_peer(&peer_name);
     let blocked_peer = world.get_peer(&blocked_peer_name);
     peer.block(&blocked_peer.addr()).await;
+}
+
+#[when(expr = "the peer {string} unblocks the peer {string}")]
+async fn unblock_peer(world: &mut PeersWorld, peer_name: String, blocked_peer_name: String) {
+    let peer = world.get_peer(&peer_name);
+    let blocked_peer = world.get_peer(&blocked_peer_name);
+    peer.unblock(&blocked_peer.addr()).await;
 }
 
 fn group_event_by_type(events: Vec<Event>) -> HashMap<String, Vec<Event>> {

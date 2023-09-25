@@ -182,7 +182,7 @@ async fn save_part_or_break(
             // Save request part
             let part = RequestPart::parse(data, addr);
             part::add(&instance.pool, &part).await;
-            debug!("Receive {:?} from {}", part, addr);
+            debug!("Receive {:?}", part);
             (ControlFlow::Continue(()), Some(part))
         }
     } else {

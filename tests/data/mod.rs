@@ -149,13 +149,9 @@ impl PeersWorld {
     pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
             debug!("\x1b[33m[TEST]\x1b[0m Add peer {:?}", peer_data);
-            let mut db_path = String::from("target/");
-            db_path.push_str(&peer_data.name);
-            db_path.push_str(".db");
             let conf = Configuration::builder()
                 .port(peer_data.port)
                 .share_connections(true)
-                .database(rudp2plib::configuration::DatabaseMode::Memory)
                 .build();
             let test_observer = TestObserver {
                 name: peer_data.name.clone(),

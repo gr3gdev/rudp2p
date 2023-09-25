@@ -50,3 +50,18 @@ pub(crate) async fn add(pool: &Pool, address: &SocketAddr) -> usize {
             0
         })
 }
+
+pub(crate) async fn remove(pool: &Pool, address: &SocketAddr) -> usize {
+    let address = &address.to_string();
+    let connection = get_connection(pool).await;
+    connection
+        .execute("DELETE FROM block_peer WHERE address = ?1", [address])
+        .and_then(|nb| {
+            trace!("[DAO] block::remove({:?}) = {nb}", address);
+            Ok(nb)
+        })
+        .unwrap_or_else(|e| {
+            error!("remove - {:?} - {e}", pool);
+            0
+        })
+}

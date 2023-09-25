@@ -20,7 +20,6 @@ use std::{
 ///
 /// struct MyObserver {
 ///     name: String,
-///     messages: Vec<String>,
 /// }
 ///
 /// #[async_trait]
@@ -36,7 +35,7 @@ use std::{
 ///     }
 ///
 ///     async fn on_message(&mut self, m: &Message) -> Option<Response> {
-///         self.messages.push(String::from_utf8(m.content.clone()).unwrap());
+///         println!("{} : {}", self.name, String::from_utf8(m.content.clone()).unwrap());
 ///         None
 ///     }
 /// }
@@ -44,24 +43,23 @@ use std::{
 /// async fn example() {
 ///     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 ///
+///     let observer1 = MyObserver{
+///         name: String::from("Peer1"),
+///     };
 ///     let peer1 = Peer::new(
 ///         Configuration::builder().port(9001).build(),
-///         MyObserver{
-///             name: String::from("Peer1"),
-///             messages: Vec::new(),
-///         },
+///         observer1,
 ///     ).await;
 ///
+///     let observer2 = MyObserver{
+///         name: String::from("Peer2"),
+///     };
 ///     let peer2 = Peer::new(
 ///         Configuration::builder().port(9002).build(),
-///         MyObserver{
-///             name: String::from("Peer2"),
-///             messages: Vec::new(),
-///         },
+///         observer2,
 ///     ).await;
 ///
-///     peer1.connect_to(peer2.addr());
-///     std::thread::sleep(std::time::Duration::from_millis(1000));
+///     peer1.connect_to(&peer2.addr());
 ///
 ///     peer1.close();
 ///     peer2.close();
@@ -138,7 +136,7 @@ impl Peer {
         thread::status(&self.pool).await
     }
 
-    pub fn connect_to(&self, addr: SocketAddr) -> () {
+    pub fn connect_to(&self, addr: &SocketAddr) -> () {
         info!("connect to {}", addr);
         let request = Request::new_connection(&self.public_key_pem);
         request.send(&self.udp_socket, &addr, &vec![]);
@@ -182,8 +180,18 @@ impl Peer {
     pub async fn block(&self, remote_address: &SocketAddr) -> () {
         let remotes = remote::select_by_address(&self.pool, &remote_address).await;
         for remote in remotes {
+            debug!("Block {remote_address}");
+            self.disconnect_to(remote_address).await;
             block::add(&self.pool, &remote.addr).await;
-            remote::remove(&self.pool, &remote).await;
+        }
+    }
+
+    pub async fn unblock(&self, remote_address: &SocketAddr) -> () {
+        let blocked_addresses = block::select_all(&self.pool).await;
+        if blocked_addresses.contains(remote_address) {
+            debug!("Unblock {remote_address}");
+            block::remove(&self.pool, &remote_address).await;
+            self.connect_to(remote_address);
         }
     }
 
@@ -307,9 +315,9 @@ mod tests {
 
         // Share connections
         // P1 => P2
-        peer1.connect_to(peer2.addr());
+        peer1.connect_to(&peer2.addr());
         // P3 => P2 ... P2 =(P1)=> P3 ... P3 => P1
-        peer3.connect_to(peer2.addr());
+        peer3.connect_to(&peer2.addr());
         wait_while_condition(&|| {
             test1.connections.lock().unwrap().len() < 2
                 || test2.connections.lock().unwrap().len() < 2

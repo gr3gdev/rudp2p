@@ -27,7 +27,7 @@ log = "0.4"
 openssl = "0.10"
 r2d2 = "0.8"
 r2d2_sqlite = "0.22"
-rusqlite = "0.29"
+rusqlite = { version = "0.29", features = ["unlock_notify", "release_memory"] }
 
 [dev-dependencies]
 openssl-sys = "0.9"
