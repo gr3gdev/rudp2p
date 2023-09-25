@@ -20,7 +20,7 @@ pub(crate) async fn create_or_upgrade(connection: &Connection) {
         .unwrap();
 }
 
-pub(crate) async fn status(peer_uid: &String, pool: &Pool) -> bool {
+pub(crate) async fn status(pool: &Pool) -> bool {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT alive FROM thread")
@@ -28,30 +28,30 @@ pub(crate) async fn status(peer_uid: &String, pool: &Pool) -> bool {
     let lines = statement
         .query_map([], |row| {
             let status: bool = row.get(0).expect("Unable to read 'status'");
-            trace!("[PEER {peer_uid}] [DAO] thread::status() = {:?}", status);
+            trace!("[DAO] thread::status() = {:?}", status);
             Ok(status)
         })
         .and_then(Iterator::collect)
         .unwrap_or_else(|e| {
-            error!("{e}");
+            error!("status - {:?} - {e}", pool);
             vec![]
         });
     lines.get(0).unwrap().clone()
 }
 
-pub(crate) async fn update(peer_uid: &String, pool: &Pool, status: bool) -> usize {
+pub(crate) async fn update(pool: &Pool, status: bool) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute("UPDATE thread SET alive = ?1", [status])
         .and_then(|nb| {
             trace!(
-                "[PEER {peer_uid}] [DAO] thread::update({:?}) = {nb}",
+                "[DAO] thread::update({:?}) = {nb}",
                 status
             );
             Ok(nb)
         })
         .unwrap_or_else(|e| {
-            error!("{e}");
+            error!("update - {:?} - {e}", pool);
             0
         })
 }

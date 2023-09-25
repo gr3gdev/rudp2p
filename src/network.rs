@@ -1,16 +1,13 @@
+use self::{events::*, request::Type};
+use crate::{
+    peer::RemotePeer,
+    utils::{decoder::Decoder, encoder::Encoder, multipart::Multipart},
+};
+use log::error;
 use std::{
     fmt::Debug,
     net::{SocketAddr, UdpSocket},
 };
-
-use log::error;
-
-use crate::{
-    dao::remote::RemotePeer,
-    utils::{decoder::Decoder, encoder::Encoder, multipart::Multipart},
-};
-
-use self::{events::*, request::Type};
 
 pub mod events;
 pub mod request;
@@ -63,9 +60,8 @@ impl Request {
         }
     }
 
-    pub(crate) fn new_connection(peer_name: &String, public_key: &Vec<u8>) -> Self {
+    pub(crate) fn new_connection(public_key: &Vec<u8>) -> Self {
         let content = Vec::new();
-        let content = Encoder::add_with_size(content, peer_name.as_bytes().to_vec());
         let content = Encoder::add_with_size(content, public_key.clone());
         Self {
             request_type: Type::Connection,
@@ -73,21 +69,17 @@ impl Request {
         }
     }
 
-    pub(crate) fn new_disconnection(peer_name: &String) -> Self {
-        let content = Vec::new();
-        let content = Encoder::add(content, peer_name.as_bytes().to_vec());
+    pub(crate) fn new_disconnection() -> Self {
         Self {
             request_type: Type::Disconnection,
-            content,
+            content: vec![1],
         }
     }
 
-    pub(crate) fn new_message(peer_name: &String, data: &Vec<u8>) -> Self {
-        let mut content = Encoder::add_with_size(Vec::new(), peer_name.as_bytes().to_vec());
-        content.append(&mut data.clone());
+    pub(crate) fn new_message(data: &Vec<u8>) -> Self {
         Self {
             request_type: Type::Message,
-            content,
+            content: data.clone(),
         }
     }
 
@@ -121,47 +113,16 @@ impl Request {
         res
     }
 
-    pub(crate) fn to_connected_event(&self, peer_uid: &String, addr: &SocketAddr) -> Connected {
+    pub(crate) fn parse_public_key(&self) -> Vec<u8> {
         let content = self.content.clone();
-        let (peer_name_size, next_index) = Decoder::get_size(&content, 0);
-        let peer_name =
-            String::from_utf8(content[next_index..next_index + peer_name_size].to_vec())
-                .expect("Unable to read content");
-        let (public_key_size, next_index) =
-            Decoder::get_size(&content, next_index + peer_name_size);
-        let public_key = content[next_index..next_index + public_key_size].to_vec();
-        Connected {
-            uid: peer_uid.clone(),
-            from: peer_name,
-            address: addr.clone(),
-            public_key,
-        }
+        let (public_key_size, next_index) = Decoder::get_size(&content, 0);
+        content[next_index..next_index + public_key_size].to_vec()
     }
 
-    pub(crate) fn to_disconnected_event(
-        &self,
-        peer_uid: &String,
-        addr: &SocketAddr,
-    ) -> Disconnected {
-        let peer_name = String::from_utf8(self.content.clone()).expect("Unable to read content");
-        Disconnected {
-            uid: peer_uid.clone(),
-            from: peer_name,
-            address: addr.clone(),
-        }
-    }
-
-    pub(crate) fn to_message_event(&self, peer_uid: &String) -> Message {
-        let content = self.content.clone();
-        let (peer_name_size, next_index) = Decoder::get_size(&content, 0);
-        let peer_name =
-            String::from_utf8(content[next_index..next_index + peer_name_size].to_vec())
-                .expect("Unable to read content");
-        let content = content[next_index + peer_name_size..].to_vec();
+    pub(crate) fn to_message_event(&self, remote: &RemotePeer) -> Message {
         Message {
-            uid: peer_uid.clone(),
-            from: peer_name,
-            content,
+            from: remote.clone(),
+            content: self.content.clone(),
         }
     }
 
@@ -190,7 +151,7 @@ impl Response {
         }
     }
 
-    pub(crate) fn to_request(&self, peer_name: &String) -> Request {
-        Request::new_message(&peer_name, &self.data)
+    pub(crate) fn to_request(&self) -> Request {
+        Request::new_message(&self.data)
     }
 }

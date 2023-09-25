@@ -18,22 +18,22 @@ async fn start_peers(world: &mut PeersWorld, step: &Step) {
 
 #[when(expr = "the peer {string} connects to {string}")]
 async fn connect_peer(world: &mut PeersWorld, from: String, to: String) {
-    let peer1 = world.get_peer(from);
-    let peer2 = world.get_peer(to);
+    let peer1 = world.get_peer(&from);
+    let peer2 = world.get_peer(&to);
     let peer2_addr = peer2.addr();
     peer1.connect_to(peer2_addr.clone());
 }
 
 #[when(expr = "the peer {string} disconnects")]
 async fn disconnect_peer(world: &mut PeersWorld, peer_name: String) {
-    let peer = world.get_peer(peer_name);
+    let peer = world.get_peer(&peer_name);
     peer.disconnect_to_all().await;
 }
 
 #[when(expr = "the peer {string} sends {string} to all")]
 async fn peer_sends_to_all(world: &mut PeersWorld, peer_name: String, data: String) {
-    let peer = world.get_peer(peer_name);
-    peer.send_to_all(Request::new(data)).await;
+    let peer = world.get_peer(&peer_name);
+    peer.send_to_all(&Request::new(data)).await;
 }
 
 #[when(expr = "the peer {string} sends {string} to {string}")]
@@ -43,19 +43,22 @@ async fn peer_sends_to_peer(
     data: String,
     other_peer: String,
 ) {
-    let peer = world.get_peer(peer_name);
+    let peer = world.get_peer(&peer_name);
+    let other_peer = world.get_peer(&other_peer);
     if data.starts_with("file:") {
         let data_file = read_file(&data[5..]);
-        peer.send_to(Request::new(data_file), other_peer).await;
+        peer.send_to(Request::new(data_file), &other_peer.addr())
+            .await;
     } else {
-        peer.send_to(Request::new(data), other_peer).await;
+        peer.send_to(Request::new(data), &other_peer.addr()).await;
     }
 }
 
 #[when(expr = "the peer {string} blocks the peer {string}")]
 async fn block_peer(world: &mut PeersWorld, peer_name: String, blocked_peer_name: String) {
-    let peer = world.get_peer(peer_name);
-    peer.block(blocked_peer_name).await;
+    let peer = world.get_peer(&peer_name);
+    let blocked_peer = world.get_peer(&blocked_peer_name);
+    peer.block(&blocked_peer.addr()).await;
 }
 
 fn group_event_by_type(events: Vec<Event>) -> HashMap<String, Vec<Event>> {
@@ -103,11 +106,11 @@ async fn receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
 
 fn main() {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
+        .filter_level(log::LevelFilter::Info)
         .format_timestamp(Some(env_logger::TimestampPrecision::Millis))
         .format_indent(Some(2))
         .format_module_path(false)
-        .format_target(false)
+        .format_target(true)
         .init();
     futures::executor::block_on(
         PeersWorld::cucumber()

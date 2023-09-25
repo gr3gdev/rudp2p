@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -6,19 +8,19 @@ pub(crate) type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectio
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct ConnectedEvent {
-    pub(crate) from: String,
+    pub(crate) from: SocketAddr,
     pub(crate) to: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct DisconnectedEvent {
-    pub(crate) from: String,
+    pub(crate) from: SocketAddr,
     pub(crate) to: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct MessageEvent {
-    pub(crate) from: String,
+    pub(crate) from: SocketAddr,
     pub(crate) to: String,
     pub(crate) content: Vec<u8>,
 }
@@ -83,17 +85,17 @@ pub(crate) async fn add_connection(pool: &Pool, c: ConnectedEvent) -> usize {
     connection
         .execute(
             "INSERT INTO connections (from_peer, to_peer) VALUES (?1, ?2)",
-            (c.from, c.to),
+            (c.from.to_string(), c.to),
         )
         .unwrap()
 }
 
-pub(crate) async fn is_peer_connected_with(pool: &Pool, peer: &String, other: &String) -> bool {
+pub(crate) async fn is_peer_connected_with(pool: &Pool, peer: &String, other: &SocketAddr) -> bool {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT 1 FROM connections WHERE to_peer = ?1 AND from_peer = ?2")
         .expect("Unable to prepare query : get_connection_for_peer");
-    let mut rows = statement.query((peer, other)).unwrap();
+    let mut rows = statement.query((peer, other.to_string())).unwrap();
     rows.next().unwrap().is_some()
 }
 
@@ -102,17 +104,17 @@ pub(crate) async fn add_disconnection(pool: &Pool, d: DisconnectedEvent) -> usiz
     connection
         .execute(
             "INSERT INTO disconnections (from_peer, to_peer) VALUES (?1, ?2)",
-            (d.from, d.to),
+            (d.from.to_string(), d.to),
         )
         .unwrap()
 }
 
-pub(crate) async fn is_peer_disconnected_with(pool: &Pool, peer: &String, other: &String) -> bool {
+pub(crate) async fn is_peer_disconnected_with(pool: &Pool, peer: &String, other: &SocketAddr) -> bool {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT 1 FROM disconnections WHERE to_peer = ?1 AND from_peer = ?2")
         .expect("Unable to prepare query : get_connection_for_peer");
-    let mut rows = statement.query((peer, other)).unwrap();
+    let mut rows = statement.query((peer, other.to_string())).unwrap();
     rows.next().unwrap().is_some()
 }
 
@@ -121,7 +123,7 @@ pub(crate) async fn add_message(pool: &Pool, m: MessageEvent) -> usize {
     connection
         .execute(
             "INSERT INTO messages (from_peer, to_peer, content) VALUES (?1, ?2, ?3)",
-            (m.from, m.to, m.content),
+            (m.from.to_string(), m.to, m.content),
         )
         .unwrap()
 }
@@ -129,16 +131,17 @@ pub(crate) async fn add_message(pool: &Pool, m: MessageEvent) -> usize {
 pub(crate) async fn get_peer_messages_from(
     pool: &Pool,
     peer: &String,
-    from: &String,
+    from: &SocketAddr,
 ) -> Vec<MessageEvent> {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT from_peer, to_peer, content FROM messages WHERE to_peer = ?1 AND from_peer = ?2")
         .expect("Unable to prepare query : get_message_for_peer");
     statement
-        .query_map((peer, from), |row| {
+        .query_map((peer, from.to_string()), |row| {
+            let addr: String = row.get(0).unwrap();
             let message = MessageEvent {
-                from: row.get(0).unwrap(),
+                from: addr.parse().unwrap(),
                 to: row.get(1).unwrap(),
                 content: row.get(2).unwrap(),
             };

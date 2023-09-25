@@ -113,7 +113,6 @@ fn mapper(row: &rusqlite::Row<'_>) -> RequestPart {
 }
 
 pub(crate) async fn select_by_uid(
-    peer_uid: &String,
     pool: &Pool,
     uid: &String,
 ) -> Vec<RequestPart> {
@@ -125,19 +124,19 @@ pub(crate) async fn select_by_uid(
         .query_map([uid], |row| {
             let part = mapper(row);
             trace!(
-                "[PEER {peer_uid}] [DAO] part::select_by_uid({uid}) = {:?}",
+                "[DAO] part::select_by_uid({uid}) = {:?}",
                 part
             );
             Ok(part)
         })
         .and_then(Iterator::collect)
         .unwrap_or_else(|e| {
-            error!("{e}");
+            error!("select_by_uid - {:?} - {e}", pool);
             vec![]
         })
 }
 
-pub(crate) async fn add(peer_uid: &String, pool: &Pool, part: &RequestPart) -> usize {
+pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute(
@@ -145,28 +144,28 @@ pub(crate) async fn add(peer_uid: &String, pool: &Pool, part: &RequestPart) -> u
             (part.uid.clone(), part.request_type.clone(), part.start, part.total, part.content_size, part.content.clone(), part.sender.to_string()),
         )
         .and_then(|nb| {
-            trace!("[PEER {peer_uid}] [DAO] part::add({:?}) = {}", part, nb);
+            trace!("[DAO] part::add({:?}) = {}", part, nb);
             Ok(nb)
         })
         .unwrap_or_else(|e| {
-            error!("{e}");
+            error!("add - {:?} - {e}", pool);
             0
         })
 }
 
-pub(crate) async fn remove_by_uid(peer_uid: &String, pool: &Pool, uid: &String) -> usize {
+pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute("DELETE FROM request_part WHERE uid = ?1", [uid])
         .and_then(|nb| {
             trace!(
-                "[PEER {peer_uid}] [DAO] part::remove_by_uid({}) = {}",
+                "[DAO] part::remove_by_uid({}) = {}",
                 uid, nb
             );
             Ok(nb)
         })
         .unwrap_or_else(|e| {
-            error!("{e}");
+            error!("remove_by_uid - {:?} - {e}", pool);
             0
         })
 }

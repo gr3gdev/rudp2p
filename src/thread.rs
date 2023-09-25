@@ -11,7 +11,7 @@ use crate::{
         connection::ConnectionService, disconnection::DisconnectionService,
         message::MessageService, share::ShareService,
     },
-    utils::{generate_uid, multipart::Multipart},
+    utils::multipart::Multipart,
 };
 use futures::executor::block_on;
 use log::{debug, error, info};
@@ -28,7 +28,6 @@ use std::{
 static END: &[u8] = "PL3AZE 5T0P".as_bytes();
 
 pub(crate) struct PeerInstance {
-    pub(crate) uid: String,
     pub(crate) pool: Pool,
     private_key: Rsa<Private>,
     pub(crate) public_key: Vec<u8>,
@@ -39,7 +38,6 @@ pub(crate) struct PeerInstance {
 impl Clone for PeerInstance {
     fn clone(&self) -> Self {
         Self {
-            uid: self.uid.clone(),
             pool: self.pool.clone(),
             private_key: self.private_key.clone(),
             public_key: self.public_key.clone(),
@@ -64,19 +62,24 @@ impl PeerInstance {
             })
             .unwrap();
 
-        let uid = configuration
-            .name
-            .clone()
-            .unwrap_or_else(|| generate_uid("P"));
-
         // Init database
-        debug!("[PEER {uid}] Init database");
-        let manager = SqliteConnectionManager::memory();
-        let pool = Pool::new(manager).expect("Unable to initialize pool");
+        debug!("Init database");
+        let manager = match configuration.database_mode.clone() {
+            crate::configuration::DatabaseMode::Memory => SqliteConnectionManager::memory(),
+            crate::configuration::DatabaseMode::File(path) => SqliteConnectionManager::file(&path),
+        }
+        .with_init(|c| {
+            c.execute_batch(
+                "PRAGMA journal_mode=wal2; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=1;",
+            )
+        });
+        let pool = Pool::builder()
+            .max_size(16)
+            .build(manager)
+            .expect("Unable to initialize pool");
         create_or_upgrade_db(&pool).await;
 
         Self {
-            uid,
             pool,
             private_key,
             public_key,
@@ -119,14 +122,10 @@ where
     // Thread
     thread::spawn(move || {
         let mut buf = [0; 2048];
-        block_on(dao::thread::update(
-            &thread_instance.uid,
-            &thread_instance.pool,
-            true,
-        ));
-        info!("[PEER {}] started.", thread_instance.uid);
+        block_on(dao::thread::update(&thread_instance.pool, true));
+        info!("Peer started.");
         loop {
-            debug!("[PEER {}] wait message...", thread_instance.uid);
+            debug!("Waiting message...");
             match thread_instance.socket.recv_from(&mut buf) {
                 Ok((number_of_bytes, addr)) => {
                     let (control_flow, part) = block_on(save_part_or_break(
@@ -136,7 +135,7 @@ where
                         number_of_bytes,
                     ));
                     if let ControlFlow::Break(reason) = control_flow {
-                        debug!("[PEER {}] {reason}", thread_instance.uid);
+                        debug!("{reason}");
                         break;
                     } else if let Some(part) = part {
                         block_on(process_complete_parts(
@@ -149,17 +148,13 @@ where
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // wait until network socket is ready
-                    debug!("[PEER {}] socket is not ready !", thread_instance.uid);
+                    debug!("Socket is not ready !");
                 }
                 Err(e) => error!("{e}"),
             }
         }
-        block_on(dao::thread::update(
-            &thread_instance.uid,
-            &thread_instance.pool,
-            false,
-        ));
-        info!("[PEER {}] stopped.", thread_instance.uid);
+        block_on(dao::thread::update(&thread_instance.pool, false));
+        info!("Peer stopped.");
     });
     instance
 }
@@ -170,28 +165,28 @@ async fn save_part_or_break(
     buf: [u8; 2048],
     number_of_bytes: usize,
 ) -> (ControlFlow<String>, Option<RequestPart>) {
-    let blocked = block::select_all(&instance.uid, &instance.pool).await;
+    let blocked = block::select_all(&instance.pool).await;
     // Only if address is not blocked
     if !blocked.contains(&addr) {
         let data = buf[..number_of_bytes].to_vec();
         if data == END {
             // Receive END
-            let peers = remote::select_all(&instance.uid, &instance.pool).await;
+            let peers = remote::select_all(&instance.pool).await;
             for remote in peers {
                 let addr = remote.addr;
-                let request = Request::new_disconnection(&instance.uid);
+                let request = Request::new_disconnection();
                 request.send(&instance.socket, &addr, &instance.public_key);
             }
             (ControlFlow::Break(String::from("Receive END")), None)
         } else {
             // Save request part
             let part = RequestPart::parse(data, addr);
-            part::add(&instance.uid, &instance.pool, &part).await;
-            debug!("[PEER {}] receive {:?} from {}", instance.uid, part, addr);
+            part::add(&instance.pool, &part).await;
+            debug!("Receive {:?} from {}", part, addr);
             (ControlFlow::Continue(()), Some(part))
         }
     } else {
-        debug!("[PEER {}] request is blocked !", instance.uid);
+        debug!("Request is blocked !");
         (ControlFlow::Continue(()), None)
     }
 }
@@ -210,7 +205,7 @@ async fn process_complete_parts<O>(
 where
     O: Observer,
 {
-    let parts = part::select_by_uid(&instance.uid, &instance.pool, part_uid).await;
+    let parts = part::select_by_uid(&instance.pool, part_uid).await;
     // Check parts are completed
     if is_complete_parts(&parts, total) {
         let instance = instance.clone();
@@ -218,11 +213,7 @@ where
         // Thread
         thread::spawn(move || {
             // Request is merged and completed : clean table
-            block_on(part::remove_by_uid(
-                &instance.uid,
-                &instance.pool,
-                &part_uid,
-            ));
+            block_on(part::remove_by_uid(&instance.pool, &part_uid));
             // Merge parts into Request
             let (request, remote_addr) = Multipart::merge(&parts, &instance.private_key);
             // Process the request
@@ -259,7 +250,7 @@ where
             process_response(
                 &instance,
                 &remote_addr,
-                DisconnectionService::execute(&instance, &request, &remote_addr, observer).await,
+                DisconnectionService::execute(&instance, &remote_addr, observer).await,
             )
             .await
         }
@@ -288,7 +279,7 @@ async fn process_response(
     res: (Option<Response>, Vec<u8>),
 ) -> () {
     if let (Some(response), pk) = res {
-        let request = response.to_request(&instance.uid);
+        let request = response.to_request();
         request.send(&instance.socket, addr, &pk);
     }
 }

@@ -16,13 +16,13 @@ impl ConfigurationBuilder {
         self
     }
 
-    pub fn name(mut self, name: &str) -> Self {
-        self.instance.name = Some(String::from(name));
+    pub fn share_connections(mut self, share: bool) -> Self {
+        self.instance.share_connections = share;
         self
     }
 
-    pub fn share_connections(mut self, share: bool) -> Self {
-        self.instance.share_connections = share;
+    pub fn database(mut self, mode: DatabaseMode) -> Self {
+        self.instance.database_mode = mode;
         self
     }
 

@@ -1,4 +1,3 @@
-use std::time::Duration;
 use async_trait::async_trait;
 use cucumber::{gherkin::Step, World};
 use futures::{future::LocalBoxFuture, FutureExt};
@@ -10,6 +9,7 @@ use rudp2plib::{
     observer::Observer,
     peer::*,
 };
+use std::{collections::HashMap, time::Duration};
 
 use crate::{
     dao::{
@@ -23,7 +23,7 @@ use crate::{
 #[derive(World, Debug)]
 #[world(init = Self::new)]
 pub(crate) struct PeersWorld {
-    peers: Vec<Peer>,
+    peers: HashMap<String, Peer>,
     pool: Pool,
 }
 
@@ -100,45 +100,37 @@ impl DataTable for Event {
 }
 
 struct TestObserver {
+    name: String,
     pool: Pool,
 }
 
 #[async_trait]
 impl Observer for TestObserver {
-    async fn on_connected(&mut self, c: Connected) -> Option<Response> {
-        add_connection(
-            &self.pool,
-            ConnectedEvent {
-                from: c.from,
-                to: c.uid,
-            },
-        )
-        .await;
+    async fn on_connected(&mut self, remote: &RemotePeer) -> Option<Response> {
+        let event = ConnectedEvent {
+            from: remote.addr,
+            to: self.name.clone(),
+        };
+        add_connection(&self.pool, event).await;
         None
     }
 
-    async fn on_disconnected(&mut self, d: Disconnected) -> Option<Response> {
-        add_disconnection(
-            &self.pool,
-            DisconnectedEvent {
-                from: d.from,
-                to: d.uid,
-            },
-        )
-        .await;
+    async fn on_disconnected(&mut self, remote: &RemotePeer) -> Option<Response> {
+        let event = DisconnectedEvent {
+            from: remote.addr,
+            to: self.name.clone(),
+        };
+        add_disconnection(&self.pool, event).await;
         None
     }
 
-    async fn on_message(&mut self, m: Message) -> Option<Response> {
-        add_message(
-            &self.pool,
-            MessageEvent {
-                from: m.from,
-                to: m.uid,
-                content: m.content,
-            },
-        )
-        .await;
+    async fn on_message(&mut self, m: &Message) -> Option<Response> {
+        let event = MessageEvent {
+            from: m.from.addr,
+            to: self.name.clone(),
+            content: m.content.clone(),
+        };
+        add_message(&self.pool, event).await;
         None
     }
 }
@@ -149,7 +141,7 @@ impl PeersWorld {
         let pool = Pool::new(manager).expect("Unable to initialize pool");
         init(&pool).await;
         Self {
-            peers: Vec::new(),
+            peers: HashMap::new(),
             pool,
         }
     }
@@ -157,29 +149,30 @@ impl PeersWorld {
     pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
             debug!("\x1b[33m[TEST]\x1b[0m Add peer {:?}", peer_data);
+            let mut db_path = String::from("target/");
+            db_path.push_str(&peer_data.name);
+            db_path.push_str(".db");
             let conf = Configuration::builder()
                 .port(peer_data.port)
-                .name(&peer_data.name)
                 .share_connections(true)
+                .database(rudp2plib::configuration::DatabaseMode::Memory)
                 .build();
             let test_observer = TestObserver {
+                name: peer_data.name.clone(),
                 pool: self.pool.clone(),
             };
             let peer = Peer::new(conf, test_observer).await;
-            self.peers.push(peer);
+            self.peers.insert(peer_data.name, peer);
         }
     }
 
-    pub(crate) fn get_peer(&self, name: String) -> &Peer {
-        self.peers
-            .iter()
-            .find(|p| p.uid == name)
-            .expect("Peer not found")
+    pub(crate) fn get_peer(&self, name: &String) -> &Peer {
+        self.peers.get(name).expect("Peer not found")
     }
 
     pub(crate) fn close(&self) -> LocalBoxFuture<()> {
         async {
-            for peer in self.peers.iter() {
+            for (_, peer) in self.peers.clone() {
                 peer.close();
                 // Wait while the server is alive
                 let start = get_time();
@@ -202,17 +195,19 @@ impl PeersWorld {
     ) -> () {
         if type_event == "CONNECTED" {
             for e in events {
+                let other = self.get_peer(&e.from).addr();
                 assert!(
-                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &e.from), 5000).await,
+                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &other), 5000).await,
                     "Peer {peer} is not connected with {}",
                     e.from
                 );
             }
         } else if type_event == "DISCONNECTED" {
             for e in events {
+                let other = self.get_peer(&e.from).addr();
                 assert!(
                     wait_until(
-                        &|| is_peer_disconnected_with(&self.pool, &peer, &e.from),
+                        &|| is_peer_disconnected_with(&self.pool, &peer, &other),
                         5000
                     )
                     .await,
@@ -225,7 +220,12 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| async {
-                            let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
+                            let messages = get_peer_messages_from(
+                                &self.pool,
+                                &peer,
+                                &self.get_peer(&e.from).addr(),
+                            )
+                            .await;
                             messages.iter().any(|m| m.content == e.content)
                         },
                         10000
@@ -250,7 +250,13 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| async {
-                            is_peer_connected_with(&self.pool, &peer, &e.from).await == false
+                            is_peer_connected_with(
+                                &self.pool,
+                                &peer,
+                                &self.get_peer(&e.from).addr(),
+                            )
+                            .await
+                                == false
                         },
                         5000
                     )
@@ -264,7 +270,13 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| async {
-                            is_peer_disconnected_with(&self.pool, &peer, &e.from).await == false
+                            is_peer_disconnected_with(
+                                &self.pool,
+                                &peer,
+                                &self.get_peer(&e.from).addr(),
+                            )
+                            .await
+                                == false
                         },
                         5000
                     )
@@ -278,7 +290,12 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| async {
-                            let messages = get_peer_messages_from(&self.pool, &peer, &e.from).await;
+                            let messages = get_peer_messages_from(
+                                &self.pool,
+                                &peer,
+                                &self.get_peer(&e.from).addr(),
+                            )
+                            .await;
                             messages.is_empty() || messages.iter().all(|m| m.content != e.content)
                         },
                         10000

@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    dao::remote,
+    dao::remote::{self},
     network::{Request, Response},
     observer::Observer,
     thread::PeerInstance,
@@ -16,32 +16,26 @@ pub(crate) struct DisconnectionService;
 impl DisconnectionService {
     pub(crate) async fn execute<O>(
         instance: &PeerInstance,
-        request: &Request,
         remote_addr: &SocketAddr,
         observer: Arc<Mutex<O>>,
     ) -> (Option<Response>, Vec<u8>)
     where
         O: Observer,
     {
-        let disconnection = request.to_disconnected_event(&instance.uid, remote_addr);
-        let remote =
-            remote::select_by_uid(&instance.uid, &instance.pool, &disconnection.from).await;
-        if !remote.is_empty() {
-            debug!("[PEER {}] DISCONNECTION from {}", instance.uid, remote_addr);
-            remote::remove_by_uid(&instance.uid, &instance.pool, &disconnection.from).await;
+        debug!("DISCONNECTION from {remote_addr}");
+        let exist = remote::select_by_address(&instance.pool, remote_addr).await;
+        if exist.is_empty() {
+            (None, vec![])
+        } else {
+            let remote = exist.get(0).unwrap();
+            remote::remove(&instance.pool, &remote).await;
             // Send disconnection to remote too
-            Request::new_disconnection(&instance.uid).send(&instance.socket, remote_addr, &vec![]);
-            debug!("[PEER {}] Fire event {:?}", instance.uid, disconnection);
+            Request::new_disconnection().send(&instance.socket, &remote.addr, &vec![]);
+            debug!("Fire event : on_disconnected({:?})", remote);
             (
-                observer
-                    .lock()
-                    .unwrap()
-                    .on_disconnected(disconnection)
-                    .await,
+                observer.lock().unwrap().on_disconnected(remote).await,
                 vec![],
             )
-        } else {
-            (None, vec![])
         }
     }
 }
