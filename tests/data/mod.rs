@@ -4,7 +4,6 @@ use futures::{future::LocalBoxFuture, FutureExt};
 use log::debug;
 use r2d2_sqlite::SqliteConnectionManager;
 use rudp2plib::{
-    configuration::Configuration,
     network::{events::*, Response},
     observer::Observer,
     peer::*,
@@ -149,10 +148,7 @@ impl PeersWorld {
     pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
             debug!("\x1b[33m[TEST]\x1b[0m Add peer {:?}", peer_data);
-            let conf = Configuration::builder()
-                .port(peer_data.port)
-                .share_connections(true)
-                .build();
+            let conf = super::configure(peer_data.port);
             let test_observer = TestObserver {
                 name: peer_data.name.clone(),
                 pool: self.pool.clone(),
@@ -173,9 +169,9 @@ impl PeersWorld {
                 // Wait while the server is alive
                 let start = get_time();
                 while peer.is_alive().await {
-                    std::thread::sleep(Duration::from_millis(1000));
+                    std::thread::sleep(Duration::from_millis(100));
                     if get_time() - start > 10000 {
-                        panic!("Peer is not stopped !");
+                        panic!("Peer is not stopped after 10 seconds !");
                     }
                 }
             }

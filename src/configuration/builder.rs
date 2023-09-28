@@ -21,8 +21,15 @@ impl ConfigurationBuilder {
         self
     }
 
-    pub fn database(mut self, mode: DatabaseMode) -> Self {
+    #[cfg(feature = "sqlite")]
+    pub fn database(mut self, mode: SqliteMode) -> Self {
         self.instance.database_mode = mode;
+        self
+    }
+
+    #[cfg(feature = "mysql")]
+    pub fn database(mut self, url: &str) -> Self {
+        self.instance.database_url = String::from(url);
         self
     }
 

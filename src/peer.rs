@@ -1,6 +1,6 @@
 use crate::{
     configuration::Configuration,
-    dao::{block, remote, thread},
+    dao::{block, remote, thread, Pool},
     network::*,
     observer::Observer,
     thread::{start_socket_job, stop_job},
@@ -76,7 +76,7 @@ pub struct Peer {
     /// PEM of the public key for remote encryption.
     public_key_pem: Vec<u8>,
     /// Database pool.
-    pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+    pool: Pool,
 }
 
 impl Debug for Peer {
@@ -216,7 +216,16 @@ impl Debug for RemotePeer {
 }
 
 #[cfg(test)]
+#[cfg(feature = "sqlite")]
 mod tests {
+    use super::{RemotePeer, Peer};
+    use crate::{
+        configuration::Configuration,
+        network::{events::Message, Request, Response},
+        observer::Observer,
+    };
+    use async_trait::async_trait;
+    use futures::executor::block_on;
     use std::{
         collections::HashMap,
         fmt::Debug,
@@ -225,16 +234,15 @@ mod tests {
         time::{Duration, SystemTime},
     };
 
-    use async_trait::async_trait;
-    use futures::executor::block_on;
-
-    use crate::{
-        configuration::Configuration,
-        network::{events::Message, Request, Response},
-        observer::Observer,
-    };
-
-    use super::{Peer, RemotePeer};
+    fn prepare(port: u16) -> (Peer, Test) {
+        let conf = Configuration::builder()
+            .port(port)
+            .share_connections(true)
+            .build();
+        let test = Test::default();
+        let peer = block_on(Peer::new(conf, test.clone()));
+        (peer, test)
+    }
 
     #[derive(Clone, Default)]
     struct Test {
@@ -270,16 +278,6 @@ mod tests {
         }
     }
 
-    fn prepare(port: u16) -> (Peer, Test) {
-        let conf = Configuration::builder()
-            .port(port)
-            .share_connections(true)
-            .build();
-        let test = Test::default();
-        let peer = block_on(Peer::new(conf, test.clone()));
-        (peer, test)
-    }
-
     fn wait_while_condition(condition: &dyn Fn() -> bool) {
         let start = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -308,7 +306,6 @@ mod tests {
 
     #[test]
     fn validate() {
-        env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
         let (peer1, test1) = prepare(9901);
         let (peer2, test2) = prepare(9902);
         let (peer3, test3) = prepare(9903);

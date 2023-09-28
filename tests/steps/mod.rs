@@ -1,14 +1,8 @@
-use std::collections::HashMap;
-
-use crate::data::{DataTable, Event, PeerData};
+use crate::data::{DataTable, Event, PeerData, PeersWorld};
 use crate::utils::read_file;
-use cucumber::{gherkin::Step, given, then, when, World};
-use data::PeersWorld;
+use cucumber::{gherkin::Step, given, then, when};
 use rudp2plib::network::Request;
-
-pub(crate) mod dao;
-pub(crate) mod data;
-pub(crate) mod utils;
+use std::collections::HashMap;
 
 #[given(expr = "the following peers are started")]
 async fn start_peers(world: &mut PeersWorld, step: &Step) {
@@ -30,12 +24,6 @@ async fn disconnect_peer(world: &mut PeersWorld, peer_name: String) {
     peer.disconnect_to_all().await;
 }
 
-#[when(expr = "the peer {string} sends {string} to all")]
-async fn peer_sends_to_all(world: &mut PeersWorld, peer_name: String, data: String) {
-    let peer = world.get_peer(&peer_name);
-    peer.send_to_all(&Request::new(data)).await;
-}
-
 #[when(expr = "the peer {string} sends {string} to {string}")]
 async fn peer_sends_to_peer(
     world: &mut PeersWorld,
@@ -44,13 +32,17 @@ async fn peer_sends_to_peer(
     other_peer: String,
 ) {
     let peer = world.get_peer(&peer_name);
-    let other_peer = world.get_peer(&other_peer);
-    if data.starts_with("file:") {
-        let data_file = read_file(&data[5..]);
-        peer.send_to(Request::new(data_file), &other_peer.addr())
-            .await;
+    if other_peer == "all" {
+        peer.send_to_all(&Request::new(data)).await;
     } else {
-        peer.send_to(Request::new(data), &other_peer.addr()).await;
+        let other_peer = world.get_peer(&other_peer);
+        if data.starts_with("file:") {
+            let data_file = read_file(&data[5..]);
+            peer.send_to(Request::new(data_file), &other_peer.addr())
+                .await;
+        } else {
+            peer.send_to(Request::new(data), &other_peer.addr()).await;
+        }
     }
 }
 
@@ -109,19 +101,4 @@ async fn receive_event(world: &mut PeersWorld, peer_name: String, step: &Step) {
                 .await;
         }
     }
-}
-
-fn main() {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .format_timestamp(Some(env_logger::TimestampPrecision::Millis))
-        .format_indent(Some(2))
-        .format_module_path(false)
-        .format_target(true)
-        .init();
-    futures::executor::block_on(
-        PeersWorld::cucumber()
-            .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())
-            .run("features"),
-    );
 }

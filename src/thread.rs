@@ -1,7 +1,7 @@
 use crate::{
     configuration::Configuration,
     dao::{
-        self, block, create_or_upgrade_db,
+        self, block,
         part::{self, RequestPart},
         remote, Pool,
     },
@@ -16,7 +16,6 @@ use crate::{
 use futures::executor::block_on;
 use log::{debug, error, info};
 use openssl::{pkey::Private, rsa::Rsa};
-use r2d2_sqlite::SqliteConnectionManager;
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
@@ -63,21 +62,7 @@ impl PeerInstance {
             .unwrap();
 
         // Init database
-        debug!("Init database");
-        let manager = match configuration.database_mode.clone() {
-            crate::configuration::DatabaseMode::Memory => SqliteConnectionManager::memory(),
-            crate::configuration::DatabaseMode::File(path) => SqliteConnectionManager::file(&path),
-        }
-        .with_init(|c| {
-            c.execute_batch(
-                "PRAGMA journal_mode=wal2; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=1;",
-            )
-        });
-        let pool = Pool::builder()
-            .max_size(16)
-            .build(manager)
-            .expect("Unable to initialize pool");
-        create_or_upgrade_db(&pool).await;
+        let pool = dao::init(configuration).await;
 
         Self {
             pool,

@@ -10,14 +10,28 @@ keywords = ["P2P", "UDP"]
 categories = ["network-programming", "web-programming"]
 exclude = ["/features", "/.github", "/target"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lib]
 name = "rudp2plib"
 path = "src/lib.rs"
 doc = true
 
 [[test]]
-name = "peer"
+name = "sqlite"
 harness = false
+required-features = ["sqlite"]
+
+[[test]]
+name = "mysql"
+harness = false
+required-features = ["mysql"]
+
+[features]
+default = ["mysql"]
+sqlite = ["dep:r2d2_sqlite", "dep:rusqlite"]
+mysql = ["dep:r2d2_mysql", "dep:mysql"]
 
 [dependencies]
 async-trait = "0.1"
@@ -26,12 +40,14 @@ futures = "0.3"
 log = "0.4"
 openssl = "0.10"
 r2d2 = "0.8"
-r2d2_sqlite = "0.22"
-rusqlite = { version = "0.29", features = ["unlock_notify", "release_memory"] }
+r2d2_sqlite = { version = "0.22", optional = true }
+r2d2_mysql = { version = "24.0", optional = true }
+rusqlite = { version = "0.29", features = ["unlock_notify", "release_memory"], optional = true }
+mysql = { version = "24.0", optional = true }
 
 [dev-dependencies]
 openssl-sys = "0.9"
-cucumber = "0.19"
-futures = "0.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+cucumber = { version = "0.20", features = ["tracing", "timestamps"] }
+tracing-subscriber = "0.3"
+r2d2_sqlite = "0.22"
+rusqlite = "0.29"

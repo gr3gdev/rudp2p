@@ -1,24 +1,23 @@
 use std::net::SocketAddr;
 
 use log::debug;
-use serde::{Deserialize, Serialize};
 
 pub(crate) type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
 pub(crate) type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub(crate) struct ConnectedEvent {
     pub(crate) from: SocketAddr,
     pub(crate) to: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub(crate) struct DisconnectedEvent {
     pub(crate) from: SocketAddr,
     pub(crate) to: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub(crate) struct MessageEvent {
     pub(crate) from: SocketAddr,
     pub(crate) to: String,
@@ -109,7 +108,11 @@ pub(crate) async fn add_disconnection(pool: &Pool, d: DisconnectedEvent) -> usiz
         .unwrap()
 }
 
-pub(crate) async fn is_peer_disconnected_with(pool: &Pool, peer: &String, other: &SocketAddr) -> bool {
+pub(crate) async fn is_peer_disconnected_with(
+    pool: &Pool,
+    peer: &String,
+    other: &SocketAddr,
+) -> bool {
     let connection = get_connection(pool).await;
     let mut statement = connection
         .prepare("SELECT 1 FROM disconnections WHERE to_peer = ?1 AND from_peer = ?2")

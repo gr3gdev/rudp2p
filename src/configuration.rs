@@ -2,8 +2,9 @@ use self::builder::ConfigurationBuilder;
 
 mod builder;
 
+#[cfg(feature = "sqlite")]
 #[derive(Debug, Default, Clone)]
-pub enum DatabaseMode {
+pub enum SqliteMode {
     #[default]
     Memory,
     File(String),
@@ -13,7 +14,10 @@ pub enum DatabaseMode {
 pub struct Configuration {
     pub(crate) port: u16,
     pub(crate) share_connections: bool,
-    pub(crate) database_mode: DatabaseMode,
+    #[cfg(feature = "sqlite")]
+    pub(crate) database_mode: SqliteMode,
+    #[cfg(feature = "mysql")]
+    pub(crate) database_url: String,
 }
 
 impl Configuration {

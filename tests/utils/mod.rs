@@ -31,7 +31,7 @@ where
     let start = get_time();
     let mut res;
     loop {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(100));
         res = condition().await;
         if res || get_time() - start > timeout_ms {
             break;
