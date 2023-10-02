@@ -28,14 +28,18 @@ impl DisconnectionService {
             (None, vec![])
         } else {
             let remote = exist.get(0).unwrap();
-            remote::remove(&instance.pool, &remote).await;
-            // Send disconnection to remote too
-            Request::new_disconnection().send(&instance.socket, &remote.addr, &vec![]);
-            debug!("Fire event : on_disconnected({:?})", remote);
-            (
-                observer.lock().unwrap().on_disconnected(remote).await,
-                vec![],
-            )
+            if remote::remove(&instance.pool, &remote).await < 1 {
+                log::error!("[DAO] Unable to remove remote peer");
+                (None, vec![])
+            } else {
+                // Send disconnection to remote too
+                Request::new_disconnection().send(&instance.socket, &remote.addr, &vec![]);
+                debug!("Fire event : on_disconnected({:?})", remote);
+                (
+                    observer.lock().unwrap().on_disconnected(remote).await,
+                    vec![],
+                )
+            }
         }
     }
 }

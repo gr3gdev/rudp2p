@@ -17,7 +17,7 @@ pub struct Configuration {
     #[cfg(feature = "sqlite")]
     pub(crate) database_mode: SqliteMode,
     #[cfg(feature = "mysql")]
-    pub(crate) database_url: String,
+    pub(crate) database_url: Option<String>,
 }
 
 impl Configuration {

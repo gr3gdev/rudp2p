@@ -10,3 +10,4 @@ services:
       - MARIADB_ROOT_PASSWORD=simpletest
     volumes:
       - ./dump:/docker-entrypoint-initdb.d
+      - ./conf:/etc/mysql/conf.d

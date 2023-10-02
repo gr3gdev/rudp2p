@@ -27,7 +27,7 @@ use std::{
 static END: &[u8] = "PL3AZE 5T0P".as_bytes();
 
 pub(crate) struct PeerInstance {
-    pub(crate) pool: Pool,
+    pub(crate) pool: Arc<Pool>,
     private_key: Rsa<Private>,
     pub(crate) public_key: Vec<u8>,
     pub(crate) socket: UdpSocket,
@@ -65,7 +65,7 @@ impl PeerInstance {
         let pool = dao::init(configuration).await;
 
         Self {
-            pool,
+            pool: Arc::new(pool),
             private_key,
             public_key,
             socket: socket.try_clone().unwrap(),
@@ -107,8 +107,12 @@ where
     // Thread
     thread::spawn(move || {
         let mut buf = [0; 2048];
-        block_on(dao::thread::update(&thread_instance.pool, true));
-        info!("Peer started.");
+        block_on(async {
+            if dao::thread::update(&thread_instance.pool, true).await < 1 {
+                error!("[DAO] Unable to update thread status");
+            }
+        });
+        info!("Peer started on port {}.", instance.configuration.port);
         loop {
             debug!("Waiting message...");
             match thread_instance.socket.recv_from(&mut buf) {
@@ -138,8 +142,12 @@ where
                 Err(e) => error!("{e}"),
             }
         }
-        block_on(dao::thread::update(&thread_instance.pool, false));
-        info!("Peer stopped.");
+        block_on(async {
+            if dao::thread::update(&thread_instance.pool, false).await < 1 {
+                error!("[DAO] Unable to update thread status");
+            }
+        });
+        info!("Peer stopped on port {}.", instance.configuration.port);
     });
     instance
 }
@@ -166,9 +174,13 @@ async fn save_part_or_break(
         } else {
             // Save request part
             let part = RequestPart::parse(data, addr);
-            part::add(&instance.pool, &part).await;
-            debug!("Receive {:?}", part);
-            (ControlFlow::Continue(()), Some(part))
+            if part::add(&instance.pool, &part).await < 1 {
+                error!("[DAO] Unable to save request part {}", part.uid);
+                (ControlFlow::Continue(()), None)
+            } else {
+                debug!("Receive {:?}", part);
+                (ControlFlow::Continue(()), Some(part))
+            }
         }
     } else {
         debug!("Request is blocked !");
@@ -198,16 +210,15 @@ where
         // Thread
         thread::spawn(move || {
             // Request is merged and completed : clean table
-            block_on(part::remove_by_uid(&instance.pool, &part_uid));
-            // Merge parts into Request
-            let (request, remote_addr) = Multipart::merge(&parts, &instance.private_key);
-            // Process the request
-            block_on(process_request(
-                &instance,
-                &request,
-                &remote_addr,
-                Arc::clone(&observer),
-            ));
+            block_on(async {
+                if part::remove_by_uid(&instance.pool, &part_uid).await < 1 {
+                    log::error!("[DAO] Unable to remove request part {}", part_uid);
+                }
+                // Merge parts into Request
+                let (request, remote_addr) = Multipart::merge(&parts, &instance.private_key);
+                // Process the request
+                process_request(&instance, &request, &remote_addr, Arc::clone(&observer)).await;
+            });
         });
     }
 }

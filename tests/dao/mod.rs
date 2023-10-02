@@ -149,7 +149,7 @@ pub(crate) async fn get_peer_messages_from(
                 content: row.get(2).unwrap(),
             };
             debug!(
-                "[PEER {peer}] \x1b[33m[TEST]\x1b[0m get_peer_messages_from({from}) : {:?}",
+                "[PEER {peer}] [TEST] get_peer_messages_from({from}) : {:?}",
                 message
             );
             Ok(message)

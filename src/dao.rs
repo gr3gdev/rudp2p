@@ -60,33 +60,42 @@ pub(crate) async fn init(configuration: &Configuration) -> Pool {
 
 #[cfg(feature = "mysql")]
 pub(crate) async fn init(configuration: &Configuration) -> Pool {
-    let opts = mysql::Opts::from_url(&configuration.database_url).expect("Invalid database url");
-    let params = mysql::OptsBuilder::from_opts(opts);
-    let manager = r2d2_mysql::MySqlConnectionManager::new(params);
-    let pool = Pool::builder()
-        .max_size(16)
-        .build(manager)
-        .expect("Unable to initialize pool");
-    create_or_upgrade_db(&pool).await;
-    pool
+    if let Some(url) = &configuration.database_url {
+        let opts = mysql::Opts::from_url(url)
+            .expect(format!("Error when parsing {:?}", configuration).as_str());
+        let params = mysql::OptsBuilder::from_opts(opts);
+        let manager = r2d2_mysql::MySqlConnectionManager::new(params);
+        let pool = Pool::builder()
+            .max_size(16)
+            .build(manager)
+            .expect("Unable to initialize pool");
+        create_or_upgrade_db(&pool).await;
+        pool
+    } else {
+        log::error!("Error in configuration : {:?}", configuration);
+        panic!("Missing databse url !")
+    }
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn execute<P: rusqlite::Params>(pool: &Pool, sql: &str, params: P) -> () {
+pub(crate) async fn execute<P: rusqlite::Params>(pool: &Pool, sql: &str, params: P) -> usize {
     let connection = get_connection(pool).await;
     connection
         .execute(sql, params)
-        .expect(format!("Unable to execute : {}", sql).as_str());
+        .expect(format!("Unable to execute : {}", sql).as_str())
 }
 
 #[cfg(feature = "mysql")]
-pub(crate) async fn execute<P: Into<mysql::Params>>(pool: &Pool, sql: &str, params: P) -> () {
+pub(crate) async fn execute<P: Into<mysql::Params>>(pool: &Pool, sql: &str, params: P) -> usize {
     use mysql::prelude::Queryable;
 
     let mut connection = get_connection(pool).await;
-    connection
-        .exec_drop(sql, params)
-        .expect(format!("Unable to execute : {}", sql).as_str())
+    let res = connection
+        .exec_iter(sql, params)
+        .expect(format!("Unable to execute : {}", sql).as_str());
+    let affected_rows = res.affected_rows() as usize;
+    drop(res);
+    affected_rows
 }
 
 #[cfg(feature = "sqlite")]

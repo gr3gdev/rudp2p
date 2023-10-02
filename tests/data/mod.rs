@@ -147,7 +147,7 @@ impl PeersWorld {
 
     pub(crate) async fn add_all(&mut self, peers: Vec<PeerData>) {
         for peer_data in peers {
-            debug!("\x1b[33m[TEST]\x1b[0m Add peer {:?}", peer_data);
+            debug!("[TEST] Add peer {:?}", peer_data);
             let conf = super::configure(peer_data.port);
             let test_observer = TestObserver {
                 name: peer_data.name.clone(),
@@ -189,7 +189,7 @@ impl PeersWorld {
             for e in events {
                 let other = self.get_peer(&e.from).addr();
                 assert!(
-                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &other), 5000).await,
+                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &other), 3000).await,
                     "Peer {peer} is not connected with {}",
                     e.from
                 );
@@ -200,7 +200,7 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| is_peer_disconnected_with(&self.pool, &peer, &other),
-                        5000
+                        3000
                     )
                     .await,
                     "Peer {peer} is not disconnected with {}",
@@ -220,7 +220,7 @@ impl PeersWorld {
                             .await;
                             messages.iter().any(|m| m.content == e.content)
                         },
-                        10000
+                        5000
                     )
                     .await,
                     "Peer {peer} has not received the message from {}",
@@ -250,7 +250,7 @@ impl PeersWorld {
                             .await
                                 == false
                         },
-                        5000
+                        3000
                     )
                     .await,
                     "Peer {peer} is connected with {}",
@@ -270,7 +270,7 @@ impl PeersWorld {
                             .await
                                 == false
                         },
-                        5000
+                        3000
                     )
                     .await,
                     "Peer {peer} is disconnected with {}",
@@ -290,7 +290,7 @@ impl PeersWorld {
                             .await;
                             messages.is_empty() || messages.iter().all(|m| m.content != e.content)
                         },
-                        10000
+                        5000
                     )
                     .await,
                     "Peer {peer} has received the message from {}",

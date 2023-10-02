@@ -74,7 +74,7 @@ impl PartialOrd for RequestPart {
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn create_or_upgrade(pool: &Pool) {
+pub(crate) async fn create_or_upgrade(pool: &Pool) -> () {
     let sql = "
     CREATE TABLE IF NOT EXISTS request_part (
         id INTEGER PRIMARY KEY,
@@ -161,7 +161,7 @@ pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RequestPart>
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> () {
+pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
     let sql = "INSERT INTO request_part (uid, type, start, total, content_size, content, sender) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
     execute(
         pool,
@@ -180,7 +180,7 @@ pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> () {
 }
 
 #[cfg(feature = "mysql")]
-pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> () {
+pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
     use mysql::params;
 
     let sql = "INSERT INTO request_part (uid, type, start, total, content_size, content, sender) VALUES (:uid, :type, :start, :total, :content_size, :content, :sender)";
@@ -201,13 +201,13 @@ pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> () {
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> () {
+pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
     let sql = "DELETE FROM request_part WHERE uid = ?1";
     execute(pool, sql, [uid]).await
 }
 
 #[cfg(feature = "mysql")]
-pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> () {
+pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
     use mysql::params;
 
     let sql = "DELETE FROM request_part WHERE uid = :uid";

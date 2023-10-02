@@ -8,75 +8,79 @@ use crate::{
 use log::{debug, error, info};
 use std::{
     fmt::Debug,
-    net::{IpAddr, SocketAddr, UdpSocket},
+    net::{IpAddr, SocketAddr, UdpSocket}, sync::Arc,
 };
 
 /// # Peer
 ///
-/// Example of a connection
-/// ```
-/// use async_trait::async_trait;
-/// use rudp2plib::{configuration::*, network::{*, events::Message}, observer::*, peer::*};
-///
-/// struct MyObserver {
-///     name: String,
-/// }
-///
-/// #[async_trait]
-/// impl Observer for MyObserver {
-///     async fn on_connected(&mut self, remote: &RemotePeer) -> Option<Response> {
-///         let mut text = String::from("Hello I am ");
-///         text.push_str(&self.name);
-///         Some(Response::text(&text))
-///     }
-///
-///     async fn on_disconnected(&mut self, remote: &RemotePeer) -> Option<Response> {
-///         Some(Response::text("Goodbye !"))
-///     }
-///
-///     async fn on_message(&mut self, m: &Message) -> Option<Response> {
-///         println!("{} : {}", self.name, String::from_utf8(m.content.clone()).unwrap());
-///         None
-///     }
-/// }
-///
-/// async fn example() {
-///     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
-///
-///     let observer1 = MyObserver{
-///         name: String::from("Peer1"),
-///     };
-///     let peer1 = Peer::new(
-///         Configuration::builder().port(9001).build(),
-///         observer1,
-///     ).await;
-///
-///     let observer2 = MyObserver{
-///         name: String::from("Peer2"),
-///     };
-///     let peer2 = Peer::new(
-///         Configuration::builder().port(9002).build(),
-///         observer2,
-///     ).await;
-///
-///     peer1.connect_to(&peer2.addr());
-///
-///     peer1.close();
-///     peer2.close();
-/// }
-///
-/// fn main() {
-///     futures::executor::block_on(example());
-/// }
-/// ```
-///
+#[cfg_attr(
+    feature = "sqlite",
+    doc = r##"
+Example of a connection with the sqlite feature
+```
+use async_trait::async_trait;
+use rudp2plib::{configuration::*, network::{*, events::Message}, observer::*, peer::*};
+
+struct MyObserver {
+    name: String,
+}
+
+#[async_trait]
+impl Observer for MyObserver {
+    async fn on_connected(&mut self, remote: &RemotePeer) -> Option<Response> {
+        let mut text = String::from("Hello I am ");
+        text.push_str(&self.name);
+        Some(Response::text(&text))
+    }
+
+    async fn on_disconnected(&mut self, remote: &RemotePeer) -> Option<Response> {
+        Some(Response::text("Goodbye !"))
+    }
+
+    async fn on_message(&mut self, m: &Message) -> Option<Response> {
+        println!("{} : {}", self.name, String::from_utf8(m.content.clone()).unwrap());
+        None
+    }
+}
+
+async fn example() {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
+    let observer1 = MyObserver{
+        name: String::from("Peer1"),
+    };
+    let peer1 = Peer::new(
+        Configuration::builder().port(9001).build(),
+        observer1,
+    ).await;
+
+    let observer2 = MyObserver{
+        name: String::from("Peer2"),
+    };
+    let peer2 = Peer::new(
+        Configuration::builder().port(9002).build(),
+        observer2,
+    ).await;
+
+    peer1.connect_to(&peer2.addr());
+
+    peer1.close();
+    peer2.close();
+}
+
+fn main() {
+    futures::executor::block_on(example());
+}
+```
+"##
+)]
 pub struct Peer {
     /// UDP socket.
     udp_socket: UdpSocket,
     /// PEM of the public key for remote encryption.
     public_key_pem: Vec<u8>,
     /// Database pool.
-    pool: Pool,
+    pool: Arc<Pool>,
 }
 
 impl Debug for Peer {
@@ -182,7 +186,9 @@ impl Peer {
         for remote in remotes {
             debug!("Block {remote_address}");
             self.disconnect_to(remote_address).await;
-            block::add(&self.pool, &remote.addr).await;
+            if block::add(&self.pool, &remote.addr).await < 1 {
+                log::error!("[DAO] Unable to block {:?}", remote);
+            }
         }
     }
 
@@ -190,8 +196,11 @@ impl Peer {
         let blocked_addresses = block::select_all(&self.pool).await;
         if blocked_addresses.contains(remote_address) {
             debug!("Unblock {remote_address}");
-            block::remove(&self.pool, &remote_address).await;
-            self.connect_to(remote_address);
+            if block::remove(&self.pool, &remote_address).await < 1 {
+                log::error!("[DAO] Unable to unblock {}", remote_address);
+            } else {
+                self.connect_to(remote_address);
+            }
         }
     }
 
@@ -218,7 +227,7 @@ impl Debug for RemotePeer {
 #[cfg(test)]
 #[cfg(feature = "sqlite")]
 mod tests {
-    use super::{RemotePeer, Peer};
+    use super::{Peer, RemotePeer};
     use crate::{
         configuration::Configuration,
         network::{events::Message, Request, Response},

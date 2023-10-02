@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn create_or_upgrade(pool: &Pool) {
+pub(crate) async fn create_or_upgrade(pool: &Pool) -> () {
     let sql = "
     CREATE TABLE IF NOT EXISTS thread (
         id INTEGER PRIMARY KEY,
@@ -21,7 +21,7 @@ pub(crate) async fn create_or_upgrade(pool: &Pool) {
         PRIMARY KEY (id)
     )";
     execute(pool, sql, {}).await;
-    let sql = "INSERT INTO thread (alive) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM thread)";
+    let sql = "INSERT INTO thread (alive) VALUES (0) ON DUPLICATE KEY UPDATE alive=0";
     execute(pool, sql, {}).await;
 }
 
@@ -36,13 +36,13 @@ pub(crate) async fn status(pool: &Pool) -> bool {
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn update(pool: &Pool, status: bool) -> () {
+pub(crate) async fn update(pool: &Pool, status: bool) -> usize {
     let sql = "UPDATE thread SET alive = ?1";
     execute(pool, sql, [status]).await
 }
 
 #[cfg(feature = "mysql")]
-pub(crate) async fn update(pool: &Pool, status: bool) -> () {
+pub(crate) async fn update(pool: &Pool, status: bool) -> usize {
     use mysql::params;
 
     let sql = "UPDATE thread SET alive = :status";

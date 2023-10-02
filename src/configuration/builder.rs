@@ -29,7 +29,7 @@ impl ConfigurationBuilder {
 
     #[cfg(feature = "mysql")]
     pub fn database(mut self, url: &str) -> Self {
-        self.instance.database_url = String::from(url);
+        self.instance.database_url = Some(String::from(url));
         self
     }
 

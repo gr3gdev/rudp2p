@@ -3,7 +3,7 @@ use crate::peer::RemotePeer;
 use std::net::SocketAddr;
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn create_or_upgrade(pool: &Pool) {
+pub(crate) async fn create_or_upgrade(pool: &Pool) -> () {
     let sql = "
     CREATE TABLE IF NOT EXISTS remote_peer (
         id INTEGER PRIMARY KEY,
@@ -90,13 +90,13 @@ pub(crate) async fn add(pool: &Pool, address: &SocketAddr, public_key: &Vec<u8>)
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn remove(pool: &Pool, remote: &RemotePeer) -> () {
+pub(crate) async fn remove(pool: &Pool, remote: &RemotePeer) -> usize {
     let sql = "DELETE FROM remote_peer WHERE id = ?1";
     execute(pool, sql, [remote.id]).await
 }
 
 #[cfg(feature = "mysql")]
-pub(crate) async fn remove(pool: &Pool, remote: &RemotePeer) -> () {
+pub(crate) async fn remove(pool: &Pool, remote: &RemotePeer) -> usize {
     use mysql::params;
 
     let sql = "DELETE FROM remote_peer WHERE id = :id";

@@ -209,9 +209,7 @@ impl<Out: io::Write> Markdown<Out> {
             Scenario::Log(msg) => {
                 self.logs.push(msg);
             }
-            Scenario::Finished => {
-                self.logs.clear();
-            }
+            Scenario::Finished => {}
         }
     }
 
@@ -420,6 +418,8 @@ impl<W: World + Debug, Out: io::Write> Writer<W> for Markdown<Out> {
                 for feature in self.features.clone() {
                     report.push_str(&feature.to_md());
                 }
+                report.push_str("\n---\n");
+                report.push_str(&details_logs(&self.logs));
                 self.output
                     .write(report.as_bytes())
                     .expect("Unable to write Markdown report");
@@ -427,6 +427,14 @@ impl<W: World + Debug, Out: io::Write> Writer<W> for Markdown<Out> {
             _ => {}
         }
     }
+}
+
+fn details(summary: &str, details: &str) -> String {
+    format!("\n\n<details>\n<summary>{summary}</summary>\n\n{details}\n</details>\n\n")
+}
+
+fn details_logs(logs: &Vec<String>) -> String {
+    details("Logs", &format!("```\n{}\n```", logs.join("")))
 }
 
 impl Display for Status {
@@ -507,36 +515,38 @@ impl ToMarkdown for Element {
         );
         let mut before = String::new();
         if !self.before.is_empty() {
-            before = format!(
-                "\n\n<details>\n<summary>Hook before</summary>\n\n{}\n</details>\n\n",
-                self.before
+            before = details(
+                "Hoos before",
+                &self
+                    .before
                     .iter()
                     .map(|h| format!("- {}", h.result))
                     .collect::<Vec<String>>()
-                    .join("\n")
+                    .join("\n"),
             );
         }
         let mut after = String::new();
         if !self.after.is_empty() {
-            after = format!(
-                "\n\n<details>\n<summary>Hook after</summary>\n\n{}\n</details>\n\n",
-                self.after
+            after = details(
+                "Hook after",
+                &self
+                    .after
                     .iter()
                     .map(|h| format!("- {}", h.result))
                     .collect::<Vec<String>>()
-                    .join("\n")
+                    .join("\n"),
             );
         }
         format!(
-            "- {} {} {} {} {}{}\n\n<details>\n<summary>Steps</summary>\n\n{}\n</details>\n\n{}",
+            "- {} {} {} {} {}{}{}{}",
             self.name,
             nb_steps_passed,
             nb_steps_skipped,
             nb_steps_failed,
             convert_duration(self.duration()),
             before,
-            report_steps,
-            after
+            details("Steps", &report_steps),
+            after,
         )
     }
 }
