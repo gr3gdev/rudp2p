@@ -34,4 +34,4 @@ jobs:
           git config advice.addIgnoredFile false
           git add -f mysql.md sqlite.md
           git commit -m "Add cucumber reports"
-          git push -u origin ${{ github.head_ref }}
+          git push origin HEAD:refs/head/${{ github.head_ref }}
