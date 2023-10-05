@@ -1,6 +1,6 @@
 Feature: Dispatch connections
 
-  Scenario: Connection and disconnection
+  Scenario: Reception of connection and disconnection events
     Given the following peers are started
       | Name | Port |
       | P0   | 9000 |

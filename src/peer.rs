@@ -1,746 +1,452 @@
-use openssl::rsa::Rsa;
+use crate::{configuration::Configuration, dao, network::*, observer::Observer, thread};
 use std::{
-    borrow::BorrowMut,
-    cell::RefCell,
-    collections::{hash_map::Entry, HashMap},
     fmt::Debug,
-    io,
     net::{IpAddr, SocketAddr, UdpSocket},
-    sync::{Arc, Mutex},
-    thread::spawn,
-    time::SystemTime,
+    sync::Arc,
 };
 
-use crate::{
-    encoder::Encoder, Error, Event, InternalPeer, InternalTypeEvent, Message, MessageMethod, Peer,
-    RemotePeer,
-};
+/// # Peer
+///
+#[cfg_attr(
+    feature = "sqlite",
+    doc = r##"
+Example of a connection with the sqlite feature
+```
+use async_trait::async_trait;
+use rudp2plib::{configuration::*, network::{*, events::Message}, observer::*, peer::*};
 
-static END: &[u8] = "PL3AZE 5T0P".as_bytes();
-
-macro_rules! info {
-    ($($arg:tt)*) => {{
-        let res = format!($($arg)*);
-        println!("\x1b[32m[INFO]\x1b[0m {}", res);
-    }}
+struct MyObserver {
+    name: String,
 }
 
-macro_rules! error {
-    ($($arg:tt)*) => {{
-        let res = format!($($arg)*);
-        println!("\x1b[33m[ERROR]\x1b[0m {}", res);
-        panic!("{}", res);
-    }}
-}
-
-impl Peer {
-    /// Return true if the thread of the peer is alive.
-    pub fn is_alive(&self) -> bool {
-        if let Some(job) = &self.job {
-            !job.is_finished()
-        } else {
-            false
-        }
+#[async_trait]
+impl Observer for MyObserver {
+    async fn on_connected(&mut self, remote: &RemotePeer) -> Option<Response> {
+        let mut text = String::from("Hello I am ");
+        text.push_str(&self.name);
+        Some(Response::text(&text))
     }
 
-    fn send_message_to(
-        socket: &UdpSocket,
-        peers: &HashMap<String, RemotePeer>,
-        message: Message,
-        to: String,
-    ) -> Result<String, Error> {
-        if let Some(remote) = peers.get(&to) {
-            // Encrypt message with remote public key
-            let mut remote_message = message.clone();
-            Encoder::encrypt(&remote.public_key.clone().unwrap(), &remote_message.data)
-                .and_then(|encrypted| {
-                    remote_message.data = encrypted;
-                    Ok(())
-                })
-                .unwrap();
-            // Split message and send
-            for m in remote_message.split() {
-                socket
-                    .send_to(&m.write(), &remote.addr)
-                    .or_else(|e| Err(Error::io(e)))
-                    .unwrap();
-            }
-            Ok(remote.uid.clone())
-        } else {
-            Err(Error::custom("This UID is not found"))
-        }
+    async fn on_disconnected(&mut self, remote: &RemotePeer) -> Option<Response> {
+        Some(Response::text("Goodbye !"))
     }
 
-    fn send_message_at(
-        socket: &UdpSocket,
-        message: &Message,
-        to: &SocketAddr,
-    ) -> Result<(), Error> {
-        // Split and send a basic message
-        for m in message.split() {
-            socket
-                .send_to(&m.write(), to)
-                .or_else(|e| Err(Error::io(e)))
-                .unwrap();
-        }
-        Ok(())
-    }
-
-    /// Send a message to a specific peer.
-    pub fn send_to(&self, message: Message, to: String) -> Result<String, Error> {
-        let mut guard_peers = self.peers.lock().unwrap();
-        let peers = guard_peers.borrow_mut();
-        Self::send_message_to(&self.udp_socket, &peers, message, to)
-    }
-
-    /// Send a message to all connected peers, return the remote peer's uids.
-    pub fn send_to_all(&self, message: Message) -> Vec<String> {
-        let mut remotes = Vec::new();
-        let guard_peers = self.peers.lock().unwrap();
-        for (uid, _) in guard_peers.clone() {
-            Self::send_message_to(&self.udp_socket, &guard_peers.clone(), message.clone(), uid)
-                .and_then(|uid| {
-                    remotes.push(uid);
-                    Ok(())
-                })
-                .unwrap_or_else(|e| error!("{e}"));
-        }
-        remotes
-    }
-
-    /// Block the peer, remove it from connected peers.
-    pub fn block(&self, uid: String) {
-        let mut guard_peers = self.peers.lock().unwrap();
-        let mut guard_rejects = self.rejects.lock().unwrap();
-        guard_rejects.push(uid.clone());
-        let peers = guard_peers.borrow_mut();
-        if peers.contains_key(&uid) {
-            peers.remove(&uid);
-        }
-    }
-
-    /// Connect to the SocketAddr.
-    pub fn connect_to(&self, addr: SocketAddr) {
-        let message = Message::internal(
-            InternalTypeEvent::CONNECTING,
-            MessageMethod::Request,
-            &InternalPeer {
-                uid: self.uid.clone(),
-                public_key_pem: self.public_key_pem.clone(),
-                private_key: None,
-                addr: self.addr(),
-                peers_connected: None,
-                rejects: vec![],
-                share_peers: self.share_peers,
-            },
-            None,
-        );
-        Self::send_message_at(&self.udp_socket, &message, &addr).unwrap();
-    }
-
-    pub(crate) fn disconnect_at(&self, addr: &SocketAddr) {
-        Self::send_message_at(
-            &self.udp_socket,
-            &Message::new_internal(
-                InternalTypeEvent::DISCONNECTING,
-                MessageMethod::Request,
-                vec![],
-            ),
-            addr,
-        )
-        .unwrap();
-    }
-
-    /// Disconnect to the peer.
-    pub fn disconnect_to(&self, to: String) {
-        let mut guard_peers = self.peers.lock().unwrap();
-        let peers = guard_peers.borrow_mut();
-        if let Some(remote) = peers.get(&to) {
-            self.disconnect_at(&remote.addr);
-        } else {
-            error!("{} not connected", to);
-        }
-    }
-
-    /// Disconnect to all remote peers, return the remote peer's uids.
-    pub fn disconnect_to_all(&self) -> Vec<String> {
-        let mut remotes = Vec::new();
-        let guard_peers = self.peers.lock().unwrap();
-        for peer in guard_peers.clone() {
-            self.disconnect_at(&peer.1.addr);
-            remotes.push(peer.0.clone());
-        }
-        remotes
-    }
-
-    /// Get the local address of the peer.
-    pub fn addr(&self) -> SocketAddr {
-        self.udp_socket.local_addr().unwrap()
-    }
-
-    /// Close the peer.
-    pub fn close(&self) {
-        self.udp_socket
-            .send_to(&END.to_vec(), self.addr())
-            .or_else(|e| Err(Error::io(e)))
-            .unwrap();
-    }
-
-    /// Start a new peer on the specific port.
-    pub fn start<F>(
-        port: u16,
-        uid: Option<&str>,
-        share_peers: bool,
-        observer: F,
-    ) -> Result<Peer, Error>
-    where
-        F: FnMut(Event) -> Option<Message> + Send + Sync + 'static,
-    {
-        // Build the peer UID
-        let uid = Self::build_uid(uid);
-        // List of remote peers
-        let remote_peers = Arc::new(Mutex::new(HashMap::new()));
-        // List of rejects peers
-        let rejects = Arc::new(Mutex::new(Vec::new()));
-        // Generate SSL keys
-        let rsa = Rsa::generate(2048).unwrap();
-        // Public Key PEM
-        let public_key_pem = rsa.public_key_to_pem().unwrap();
-        // Bind socket
-        let addr = "127.0.0.1".parse::<IpAddr>().unwrap();
-        let socket = UdpSocket::bind(SocketAddr::new(addr, port)).unwrap();
-        // Clones for the thread
-        let uid_job = uid.clone();
-        let socket_job = socket.try_clone().unwrap();
-        let public_key_job = public_key_pem.clone();
-        let remote_peers_job = Arc::clone(&remote_peers);
-        let rejects_peers_job = Arc::clone(&rejects);
-        // Start a thread (receive)
-        let job = spawn(move || {
-            let mut buf = [0; 2048];
-            let shared_observer = Arc::new(Mutex::new(RefCell::new(observer)));
-            let shared_cache_messages: Arc<Mutex<HashMap<String, Vec<Message>>>> =
-                Arc::new(Mutex::new(HashMap::new()));
-            // Clones for the loop
-            let socket_loop = socket_job.try_clone().unwrap();
-            // Loop for receive packets
-            loop {
-                let mut guard_observer = shared_observer.lock().unwrap();
-                let mut guard_cache_messages = shared_cache_messages.lock().unwrap();
-                match socket_loop.recv_from(&mut buf) {
-                    Ok((number_of_bytes, addr)) => {
-                        let data = buf[..number_of_bytes].to_vec();
-                        // If stop data
-                        if data == END {
-                            info!("Peer {} stopped.", uid_job);
-                            break;
-                        }
-                        // Parse Message
-                        let message = Message::read(&data).unwrap_or_else(|e| error!("{e}"));
-                        let uid_message = message.uid.clone();
-                        // Cache for rebuild split messages
-                        match guard_cache_messages.entry(uid_message.clone()) {
-                            Entry::Occupied(mut o) => {
-                                let list = o.get_mut();
-                                list.push(message);
-                                list
-                            }
-                            Entry::Vacant(v) => v.insert(vec![message]),
-                        };
-                        let cache_messages = guard_cache_messages.borrow_mut();
-                        let mut guard_remote_peers = remote_peers_job.lock().unwrap();
-                        let mut guard_rejects = rejects_peers_job.lock().unwrap();
-                        // Parse Event
-                        let (event, peers_updated, messages) = Event::parse(
-                            InternalPeer {
-                                uid: uid_job.clone(),
-                                public_key_pem: public_key_job.clone(),
-                                private_key: Some(rsa.clone()),
-                                addr: socket_job.local_addr().unwrap(),
-                                peers_connected: Some(guard_remote_peers.borrow_mut().clone()),
-                                rejects: guard_rejects.borrow_mut().clone(),
-                                share_peers,
-                            },
-                            &uid_message,
-                            &addr,
-                            cache_messages,
-                        )
-                        .unwrap_or_else(|e| error!("{e}"));
-                        // Update connected peers
-                        guard_remote_peers.clear();
-                        for (uid, remote) in &peers_updated {
-                            guard_remote_peers.insert(uid.clone(), remote.clone());
-                        }
-                        // Internal responses
-                        for (remote, internal_messages) in messages {
-                            for message in internal_messages {
-                                Self::send_message_at(&socket_loop, &message, &remote)
-                                    .unwrap_or_else(|e| error!("{e}"));
-                            }
-                        }
-                        // Listener
-                        if let Some(event) = event {
-                            let from = event.from.clone();
-                            let obs = guard_observer.borrow_mut().get_mut();
-                            if let Some(response) = obs(event) {
-                                Self::send_message_to(&socket_loop, &peers_updated, response, from)
-                                    .unwrap();
-                            }
-                        }
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        // wait until network socket is ready
-                    }
-                    Err(e) => error!("{e}"),
-                }
-            }
-        });
-        info!("Peer {} started.", uid);
-        Ok(Self {
-            uid,
-            job: Some(job),
-            udp_socket: socket,
-            peers: remote_peers,
-            rejects: rejects,
-            public_key_pem,
-            share_peers,
-        })
-    }
-
-    fn build_uid(uid: Option<&str>) -> String {
-        let mut default_uid = String::from("P");
-        default_uid.push_str(
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-                .to_string()
-                .as_str(),
-        );
-        uid.map(String::from).unwrap_or(default_uid)
+    async fn on_message(&mut self, m: &Message) -> Option<Response> {
+        println!("{} : {}", self.name, String::from_utf8(m.content.clone()).unwrap());
+        None
     }
 }
 
-impl Debug for InternalPeer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InternalPeer")
-            .field("uid", &self.uid)
-            .field("addr", &self.addr)
-            .field("peers_connected", &self.peers_connected)
-            .field("share_peers", &self.share_peers)
-            .finish()
-    }
+async fn example() {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
+    let observer1 = MyObserver{
+        name: String::from("Peer1"),
+    };
+    let peer1 = Peer::new(
+        Configuration::builder().port(9001).build(),
+        observer1,
+    ).await;
+
+    let observer2 = MyObserver{
+        name: String::from("Peer2"),
+    };
+    let peer2 = Peer::new(
+        Configuration::builder().port(9002).build(),
+        observer2,
+    ).await;
+
+    peer1.connect_to(&peer2.addr());
+
+    peer1.close();
+    peer2.close();
+}
+
+fn main() {
+    futures::executor::block_on(example());
+}
+```
+"##
+)]
+pub struct Peer {
+    /// UDP socket.
+    udp_socket: UdpSocket,
+    /// PEM of the public key for remote encryption.
+    public_key_pem: Vec<u8>,
+    /// Database pool.
+    pool: Arc<dao::Pool>,
 }
 
 impl Debug for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Peer")
-            .field("uid", &self.uid)
-            .field("job", &self.job)
             .field("udp_socket", &self.udp_socket)
-            .field("peers", &self.peers)
+            .field("public_key_pem", &self.public_key_pem.len())
+            .field("pool", &self.pool)
             .finish()
     }
+}
+
+impl Clone for Peer {
+    fn clone(&self) -> Self {
+        Self {
+            udp_socket: self.udp_socket.try_clone().expect("Unable to clone socket"),
+            public_key_pem: self.public_key_pem.clone(),
+            pool: self.pool.clone(),
+        }
+    }
+}
+
+impl Peer {
+    pub async fn new<O>(configuration: Configuration, observer: O) -> Peer
+    where
+        O: Observer,
+    {
+        // Get local IP
+        let addr = "127.0.0.1"
+            .parse::<IpAddr>()
+            .or_else(|e| {
+                log::error!("Unable to initialize IP address : {e}");
+                Err("Unable to initialize IP address")
+            })
+            .unwrap();
+
+        // New UDP socket
+        let socket = UdpSocket::bind(SocketAddr::new(addr, configuration.port))
+            .or_else(|e| {
+                log::error!("Unable to bind socket on port : {e}");
+                Err("Unable to bind socket on port")
+            })
+            .unwrap();
+
+        // Start thread for processing messages
+        let instance = thread::start_socket_job(&configuration, &socket, observer).await;
+
+        // Return Peer
+        let peer = Peer {
+            udp_socket: socket,
+            public_key_pem: instance.public_key,
+            pool: instance.pool,
+        };
+        log::trace!("Peer::new({:?}, observer) => {:?}", configuration, peer);
+        peer
+    }
+
+    pub async fn is_alive(&self) -> bool {
+        let alive = dao::thread::status(&self.pool).await;
+        log::trace!("Peer::is_alive() => {alive}");
+        alive
+    }
+
+    pub fn connect_to(&self, addr: &SocketAddr) -> () {
+        log::trace!("Peer::connect_to({addr})");
+        let request = Request::new_connection(&self.public_key_pem);
+        request.send(&self.udp_socket, &addr, &vec![]);
+    }
+
+    fn send(&self, request: Request, remote_peers: Vec<RemotePeer>) -> () {
+        log::trace!("Peer::send({:?}, {:?})", request, remote_peers);
+        for remote in remote_peers {
+            request.send(&self.udp_socket, &remote.addr, &remote.public_key);
+        }
+    }
+
+    pub async fn send_to(&self, request: Request, remote_address: &SocketAddr) -> () {
+        log::trace!("Peer::send_to({:?}, {remote_address})", request);
+        let request = Request::new_message(&request.content);
+        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
+        self.send(request, remotes);
+    }
+
+    pub async fn send_to_all(&self, request: &Request) -> () {
+        log::trace!("Peer::send_to_all({:?})", request);
+        let request = Request::new_message(&request.content);
+        let remote_peers = dao::remote::select_all(&self.pool).await;
+        self.send(request, remote_peers);
+    }
+
+    pub async fn disconnect_to(&self, remote_address: &SocketAddr) -> () {
+        log::trace!("Peer::disconnect_to({remote_address})");
+        let request = Request::new_disconnection();
+        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
+        self.send(request, remotes);
+    }
+
+    pub async fn disconnect_to_all(&self) -> () {
+        log::trace!("Peer::disconnect_to_all()");
+        let request = Request::new_disconnection();
+        let remote_peers = dao::remote::select_all(&self.pool).await;
+        self.send(request, remote_peers);
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        let addr = self.udp_socket.local_addr().unwrap();
+        log::trace!("Peer::addr() => {addr}");
+        addr
+    }
+
+    pub async fn block(&self, remote_address: &SocketAddr) -> () {
+        log::trace!("Peer::block({remote_address})");
+        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
+        for remote in remotes {
+            self.disconnect_to(remote_address).await;
+            if dao::block::add(&self.pool, &remote.addr).await < 1 {
+                log::error!("[DAO] Unable to block {:?}", remote);
+            }
+        }
+    }
+
+    pub async fn unblock(&self, remote_address: &SocketAddr) -> () {
+        log::trace!("Peer::unblock({remote_address})");
+        let blocked_addresses = dao::block::select_all(&self.pool).await;
+        if blocked_addresses.contains(remote_address) {
+            if dao::block::remove(&self.pool, &remote_address).await < 1 {
+                log::error!("[DAO] Unable to unblock {}", remote_address);
+            } else {
+                self.connect_to(remote_address);
+            }
+        }
+    }
+
+    pub fn close(&self) -> () {
+        log::trace!("Peer::close()");
+        thread::stop_job(&self.udp_socket);
+    }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct RemotePeer {
+    pub(crate) id: i64,
+    pub addr: SocketAddr,
+    pub(crate) public_key: Vec<u8>,
 }
 
 impl Debug for RemotePeer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemotePeer")
-            .field("uid", &self.uid)
             .field("addr", &self.addr)
             .finish()
     }
 }
 
 #[cfg(test)]
+#[cfg(feature = "sqlite")]
 mod tests {
-    use std::collections::hash_map::Entry;
-    use std::collections::HashMap;
-    use std::fmt::Debug;
-    use std::thread::sleep;
+    use super::{Peer, RemotePeer};
+    use crate::{
+        configuration::Configuration,
+        network::{events::Message, Request, Response},
+        observer::Observer,
+    };
+    use async_trait::async_trait;
+    use futures::executor::block_on;
     use std::{
+        collections::HashMap,
+        fmt::Debug,
+        net::SocketAddr,
         sync::{Arc, Mutex},
         time::{Duration, SystemTime},
     };
 
-    use crate::{Message, Peer, TypeEvent};
+    fn prepare(port: u16) -> (Peer, Test) {
+        let conf = Configuration::builder()
+            .port(port)
+            .share_connections(true)
+            .build();
+        let test = Test::default();
+        let peer = block_on(Peer::new(conf, test.clone()));
+        (peer, test)
+    }
 
-    pub(crate) fn wait_until<T>(expected: &dyn Fn() -> T, actual: &dyn Fn() -> T)
-    where
-        T: PartialEq,
-        T: Debug,
-    {
+    #[derive(Clone, Default)]
+    struct Test {
+        connections: Arc<Mutex<Vec<RemotePeer>>>,
+        disconnections: Arc<Mutex<Vec<RemotePeer>>>,
+        messages: Arc<Mutex<HashMap<SocketAddr, Vec<String>>>>,
+    }
+
+    #[async_trait]
+    impl Observer for Test {
+        async fn on_connected(&mut self, remote: &RemotePeer) -> Option<Response> {
+            let mut connections = self.connections.lock().unwrap();
+            connections.push(remote.clone());
+            None
+        }
+        async fn on_disconnected(&mut self, remote: &RemotePeer) -> Option<Response> {
+            let mut disconnections = self.disconnections.lock().unwrap();
+            disconnections.push(remote.clone());
+            None
+        }
+        async fn on_message(&mut self, m: &Message) -> Option<Response> {
+            let mut messages = self.messages.lock().unwrap();
+            match messages.entry(m.from.addr) {
+                std::collections::hash_map::Entry::Occupied(mut o) => {
+                    let list: &mut Vec<String> = o.get_mut();
+                    list.push(String::from_utf8(m.content.clone()).unwrap());
+                }
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(vec![String::from_utf8(m.content.clone()).unwrap()]);
+                }
+            }
+            None
+        }
+    }
+
+    fn wait_while_condition(condition: &dyn Fn() -> bool) {
         let start = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        loop {
-            if expected() != actual() {
-                sleep(Duration::from_millis(100));
-                let current = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-                if current - start > 3000 {
-                    assert_eq!(expected(), actual());
-                }
-            } else {
-                assert_eq!(expected(), actual());
-                break;
+        while condition() {
+            std::thread::sleep(Duration::from_millis(1000));
+            let current = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            if current - start > 5000 {
+                panic!("Timeout !");
             }
         }
     }
 
-    fn init_peer(
-        uid: &str,
-        port: u16,
-        peer_connected: Arc<Mutex<Vec<String>>>,
-        peer_disconnected: Arc<Mutex<Vec<String>>>,
-        messages: Arc<Mutex<HashMap<String, Vec<String>>>>,
-        share: bool,
-    ) -> Peer {
-        Peer::start(port, Some(uid), share, move |event| {
-            println!("{:?}", event);
-            let mut guard_connected = peer_connected.lock().unwrap();
-            let mut guard_disconnected = peer_disconnected.lock().unwrap();
-            let mut guard_messages = messages.lock().unwrap();
-            if event.type_event == TypeEvent::CONNECTED {
-                guard_connected.push(event.from.clone());
-                guard_connected.sort();
-            }
-            if event.type_event == TypeEvent::DISCONNECTED {
-                guard_disconnected.push(event.from.clone());
-                guard_disconnected.sort();
-            }
-            if event.type_event == TypeEvent::MESSAGE {
-                let text = String::from_utf8(event.message.unwrap().data).unwrap();
-                match guard_messages.entry(event.from.clone()) {
-                    Entry::Occupied(mut o) => {
-                        let list = o.get_mut();
-                        list.push(text);
-                        list
-                    }
-                    Entry::Vacant(v) => v.insert(vec![text]),
-                };
-            }
-            None
-        })
-        .unwrap()
+    fn check<T>(expected: Vec<T>, mut actual: Vec<T>)
+    where
+        T: Ord,
+        T: Debug,
+    {
+        actual.sort();
+        assert_eq!(expected, actual);
     }
 
     #[test]
-    fn test_connect_share_peers() {
-        let peer1_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer1 = init_peer(
-            "Peer1",
-            9001,
-            Arc::clone(&peer1_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            true,
+    fn validate() {
+        let (peer1, test1) = prepare(9901);
+        let (peer2, test2) = prepare(9902);
+        let (peer3, test3) = prepare(9903);
+
+        // Share connections
+        // P1 => P2
+        peer1.connect_to(&peer2.addr());
+        // P3 => P2 ... P2 =(P1)=> P3 ... P3 => P1
+        peer3.connect_to(&peer2.addr());
+        wait_while_condition(&|| {
+            test1.connections.lock().unwrap().len() < 2
+                || test2.connections.lock().unwrap().len() < 2
+                || test3.connections.lock().unwrap().len() < 2
+        });
+        check(
+            vec![peer2.addr(), peer3.addr()],
+            test1
+                .connections
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.addr)
+                .collect(),
+        );
+        check(
+            vec![peer1.addr(), peer3.addr()],
+            test2
+                .connections
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.addr)
+                .collect(),
+        );
+        check(
+            vec![peer1.addr(), peer2.addr()],
+            test3
+                .connections
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.addr)
+                .collect(),
         );
 
-        let peer2_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer2 = init_peer(
-            "Peer2",
-            9002,
-            Arc::clone(&peer2_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            true,
+        // Send message to all
+        block_on(peer2.send_to_all(&Request::new("Hello everybody !")));
+        wait_while_condition(&|| {
+            test1.messages.lock().unwrap().len() < 1 || test3.messages.lock().unwrap().len() < 1
+        });
+        check(
+            vec![(peer2.addr(), vec![String::from("Hello everybody !")])],
+            Vec::from_iter(test1.messages.lock().unwrap().clone()),
+        );
+        check(
+            vec![(peer2.addr(), vec![String::from("Hello everybody !")])],
+            Vec::from_iter(test3.messages.lock().unwrap().clone()),
         );
 
-        let peer3_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer3 = init_peer(
-            "Peer3",
-            9003,
-            Arc::clone(&peer3_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            true,
+        let binding = test2.connections.lock().unwrap();
+        let remote_peer1 = binding.iter().find(|r| r.addr == peer1.addr()).unwrap();
+
+        // Send message to peer
+        block_on(peer2.send_to(Request::new("What's your name ?"), &remote_peer1.addr));
+        wait_while_condition(&|| {
+            test1
+                .messages
+                .lock()
+                .unwrap()
+                .get(&peer2.addr())
+                .unwrap()
+                .len()
+                < 2
+        });
+        check(
+            vec![(
+                peer2.addr(),
+                vec![
+                    String::from("Hello everybody !"),
+                    String::from("What's your name ?"),
+                ],
+            )],
+            Vec::from_iter(test1.messages.lock().unwrap().clone()),
         );
 
-        peer1.connect_to(peer2.addr());
-        wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer2")
+        // Disconnection with all
+        block_on(peer2.disconnect_to_all());
+        wait_while_condition(&|| {
+            test1.disconnections.lock().unwrap().len() < 1
+                || test3.disconnections.lock().unwrap().len() < 1
         });
-        wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer1")
-        });
-
-        peer3.connect_to(peer2.addr());
-        wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer2,Peer3")
-        });
-        wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer1,Peer3")
-        });
-        wait_until(&|| peer3_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer1,Peer2")
-        });
-
-        peer1.close();
-        peer2.close();
-        peer3.close();
-    }
-
-    #[test]
-    fn test_connect_without_share_peers() {
-        let peer1_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer1 = init_peer(
-            "Peer1",
-            9101,
-            Arc::clone(&peer1_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
+        check(
+            vec![peer2.addr()],
+            test1
+                .disconnections
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.addr)
+                .collect(),
+        );
+        check(
+            vec![peer2.addr()],
+            test3
+                .disconnections
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.addr)
+                .collect(),
         );
 
-        let peer2_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer2 = init_peer(
-            "Peer2",
-            9102,
-            Arc::clone(&peer2_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
+        let binding = test1.connections.lock().unwrap();
+        let remote_peer3 = binding.iter().find(|r| r.addr == peer3.addr()).unwrap();
+
+        // Disconnection with peer
+        block_on(peer1.disconnect_to(&remote_peer3.addr));
+        wait_while_condition(&|| test3.disconnections.lock().unwrap().len() < 2);
+        check(
+            vec![peer1.addr(), peer2.addr()],
+            test3
+                .disconnections
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.addr)
+                .collect(),
         );
-
-        let peer3_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer3 = init_peer(
-            "Peer3",
-            9103,
-            Arc::clone(&peer3_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
-        );
-
-        peer1.connect_to(peer2.addr());
-        peer3.connect_to(peer1.addr());
-
-        wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer2,Peer3")
-        });
-        wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer1")
-        });
-        wait_until(&|| peer3_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer1")
-        });
-
-        peer1.close();
-        peer2.close();
-        peer3.close();
-    }
-
-    #[test]
-    fn test_disconnect() {
-        let peer1_disconnected = Arc::new(Mutex::new(Vec::new()));
-        let peer1 = init_peer(
-            "Peer1",
-            9201,
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::clone(&peer1_disconnected),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
-        );
-
-        let peer2_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer2_disconnected = Arc::new(Mutex::new(Vec::new()));
-        let peer2 = init_peer(
-            "Peer2",
-            9202,
-            Arc::clone(&peer2_connected),
-            Arc::clone(&peer2_disconnected),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
-        );
-
-        peer1.connect_to(peer2.addr());
-
-        wait_until(&|| peer2_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer1")
-        });
-
-        peer2.disconnect_to(String::from("Peer1"));
-
-        wait_until(&|| peer1_disconnected.lock().unwrap().join(","), &|| {
-            String::from("Peer2")
-        });
-        wait_until(&|| peer2_disconnected.lock().unwrap().join(","), &|| {
-            String::from("Peer1")
-        });
-
-        peer1.close();
-        peer2.close();
-    }
-
-    #[test]
-    fn test_close() {
-        let peer = init_peer(
-            "Peer1",
-            9300,
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
-        );
-        peer.close();
-        wait_until(&|| false, &|| peer.is_alive());
-    }
-
-    #[test]
-    fn test_send_message() {
-        let peer1_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer1 = init_peer(
-            "Peer1",
-            9401,
-            Arc::clone(&peer1_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            false,
-        );
-        let peer2_messages = Arc::new(Mutex::new(HashMap::new()));
-        let peer2 = init_peer(
-            "Peer2",
-            9402,
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::clone(&peer2_messages),
-            false,
-        );
-
-        peer1.connect_to(peer2.addr());
-        wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer2")
-        });
-
-        peer1
-            .send_to(Message::new("Hello !".as_bytes().to_vec()), peer2.uid)
-            .unwrap();
-        wait_until(&|| true, &|| {
-            peer2_messages.lock().unwrap().get(&peer1.uid).is_some()
-        });
-        wait_until(
-            &|| {
-                peer2_messages
-                    .lock()
-                    .unwrap()
-                    .get(&peer1.uid)
-                    .unwrap()
-                    .join(",")
-            },
-            &|| String::from("Hello !"),
-        );
-    }
-
-    #[test]
-    fn test_send_message_to_all() {
-        let peer1_connected = Arc::new(Mutex::new(Vec::new()));
-        let peer1 = init_peer(
-            "Peer1",
-            9501,
-            Arc::clone(&peer1_connected),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(HashMap::new())),
-            true,
-        );
-        let peer2_messages = Arc::new(Mutex::new(HashMap::new()));
-        let peer2 = init_peer(
-            "Peer2",
-            9502,
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::clone(&peer2_messages),
-            true,
-        );
-        let peer3_messages = Arc::new(Mutex::new(HashMap::new()));
-        let peer3 = init_peer(
-            "Peer3",
-            9503,
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::clone(&peer3_messages),
-            true,
-        );
-
-        peer1.connect_to(peer2.addr());
-        peer3.connect_to(peer2.addr());
-        wait_until(&|| peer1_connected.lock().unwrap().join(","), &|| {
-            String::from("Peer2,Peer3")
-        });
-
-        let mut remotes = peer1.send_to_all(Message::new("Hello !".as_bytes().to_vec()));
-        remotes.sort();
-        assert_eq!(vec!["Peer2", "Peer3"], remotes);
-
-        wait_until(&|| true, &|| {
-            peer2_messages.lock().unwrap().get(&peer1.uid).is_some()
-        });
-        wait_until(&|| true, &|| {
-            peer3_messages.lock().unwrap().get(&peer1.uid).is_some()
-        });
-        wait_until(
-            &|| {
-                peer2_messages
-                    .lock()
-                    .unwrap()
-                    .get(&peer1.uid)
-                    .unwrap()
-                    .join(",")
-            },
-            &|| String::from("Hello !"),
-        );
-        wait_until(
-            &|| {
-                peer3_messages
-                    .lock()
-                    .unwrap()
-                    .get(&peer1.uid)
-                    .unwrap()
-                    .join(",")
-            },
-            &|| String::from("Hello !"),
-        );
-    }
-
-    #[test]
-    fn test_event_chaining() {
-        let peer1_message = Arc::new(Mutex::new(Vec::new()));
-        let shared_peer1_message = Arc::clone(&peer1_message);
-        let peer1 = Peer::start(9601, Some("Peer1"), true, move |event| {
-            if event.type_event == TypeEvent::CONNECTED {
-                Some(Message::new("Hello I am Peer1".as_bytes().to_vec()))
-            } else if event.type_event == TypeEvent::MESSAGE {
-                let mut guard_message = shared_peer1_message.lock().unwrap();
-                guard_message.push(String::from_utf8(event.message.unwrap().data).unwrap());
-                None
-            } else {
-                None
-            }
-        })
-        .unwrap();
-        let peer2_message = Arc::new(Mutex::new(Vec::new()));
-        let shared_peer2_message = Arc::clone(&peer2_message);
-        let peer2 = Peer::start(9602, Some("Peer2"), true, move |event| {
-            if event.type_event == TypeEvent::MESSAGE {
-                let mut guard_message = shared_peer2_message.lock().unwrap();
-                guard_message.push(String::from_utf8(event.message.unwrap().data).unwrap());
-                Some(Message::new("Hello I am Peer2".as_bytes().to_vec()))
-            } else {
-                None
-            }
-        })
-        .unwrap();
-        peer1.connect_to(peer2.addr());
-        wait_until(&|| false, &|| peer2_message.lock().unwrap().is_empty());
-        wait_until(&|| String::from("Hello I am Peer1"), &|| {
-            peer2_message.lock().unwrap().get(0).unwrap().clone()
-        });
-        wait_until(&|| false, &|| peer1_message.lock().unwrap().is_empty());
-        wait_until(&|| String::from("Hello I am Peer2"), &|| {
-            peer1_message.lock().unwrap().get(0).unwrap().clone()
-        });
     }
 }

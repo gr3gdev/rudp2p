@@ -1,7 +1,9 @@
 use std::fs::File;
 use std::io::Read;
-use std::time::{Duration, SystemTime};
-use std::{env, fs, thread};
+use std::time::SystemTime;
+use std::{env, fs};
+
+use futures::Future;
 
 pub(crate) fn read_file(file: &str) -> Vec<u8> {
     let current_dir = env::current_dir().unwrap();
@@ -14,19 +16,25 @@ pub(crate) fn read_file(file: &str) -> Vec<u8> {
     buffer
 }
 
-pub(crate) fn wait_while_condition(condition: &dyn Fn() -> bool) {
-    let start = SystemTime::now()
+pub(crate) fn get_time() -> u128 {
+    SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
-        .as_millis();
-    while condition() {
-        thread::sleep(Duration::from_millis(1000));
-        let current = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        if current - start > 5000 {
-            panic!("Timeout !");
+        .as_millis()
+}
+
+pub(crate) async fn wait_until<F, Fut>(condition: F, timeout_ms: u128) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let start = get_time();
+    let mut res;
+    loop {
+        res = condition().await;
+        if res || get_time() - start > timeout_ms {
+            break;
         }
     }
+    res
 }

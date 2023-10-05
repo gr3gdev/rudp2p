@@ -2,3 +2,6 @@
 /.idea/
 *.iml
 /.vscode/
+/report/node_modules
+sqlite.md
+mysql.md
