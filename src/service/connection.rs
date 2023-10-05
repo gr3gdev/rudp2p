@@ -5,7 +5,6 @@ use crate::{
     peer::RemotePeer,
     thread::PeerInstance,
 };
-use log::debug;
 use std::{
     net::{SocketAddr, UdpSocket},
     sync::{Arc, Mutex},
@@ -18,11 +17,17 @@ fn share_connection(
     addr: &SocketAddr,
     connected_peers: &Vec<RemotePeer>,
     share_connections: bool,
-) {
+) -> () {
+    log::trace!(
+        "share_connection({:?}, {addr}, {:?}, {share_connections})",
+        socket,
+        connected_peers
+    );
     if share_connections {
         let req = Request::new_share_connection(connected_peers);
-        debug!("share connection {:?} with {}", connected_peers, addr);
         req.send(socket, &addr, &vec![]);
+    } else {
+        log::debug!("share connections is disabled");
     }
 }
 
@@ -39,8 +44,7 @@ impl ConnectionService {
         let connected_peers = remote::select_all(&instance.pool).await;
         let public_key = request.parse_public_key();
         let exist = remote::select_by_address(&instance.pool, remote_addr).await;
-        if exist.is_empty() {
-            debug!("CONNECTION from {remote_addr}");
+        let res = if exist.is_empty() {
             // Share connection ?
             share_connection(
                 &instance.socket,
@@ -56,10 +60,16 @@ impl ConnectionService {
                 &remote_addr,
                 &vec![],
             );
-            debug!("Fire event : on_connected({:?})", remote);
             (observer.lock().unwrap().on_connected(&remote).await, vec![])
         } else {
             (None, vec![])
-        }
+        };
+        log::trace!(
+            "ConnectionService::execute({:?}, {:?}, {remote_addr}, observer) => {:?}",
+            instance,
+            request,
+            res
+        );
+        res
     }
 }

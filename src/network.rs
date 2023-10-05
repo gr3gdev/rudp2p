@@ -12,7 +12,7 @@ use std::{
 pub mod events;
 pub mod request;
 
-pub trait Data {
+pub trait Data: Debug {
     fn to_vec(&self) -> Vec<u8>;
 }
 
@@ -54,33 +54,45 @@ impl Request {
     where
         D: Data,
     {
-        Self {
+        let instance = Self {
             request_type: Type::Message,
             content: data.to_vec().clone(),
-        }
+        };
+        log::trace!("Request::new({:?}) => {:?}", data, instance);
+        instance
     }
 
     pub(crate) fn new_connection(public_key: &Vec<u8>) -> Self {
         let content = Vec::new();
-        let content = Encoder::add_with_size(content, public_key.clone());
-        Self {
+        let content = Encoder::add_with_size(&content, &public_key);
+        let instance = Self {
             request_type: Type::Connection,
             content,
-        }
+        };
+        log::trace!(
+            "Request::new_connection({}) => {:?}",
+            public_key.len(),
+            instance
+        );
+        instance
     }
 
     pub(crate) fn new_disconnection() -> Self {
-        Self {
+        let instance = Self {
             request_type: Type::Disconnection,
             content: vec![1],
-        }
+        };
+        log::trace!("Request::new_disconnection() => {:?}", instance);
+        instance
     }
 
     pub(crate) fn new_message(data: &Vec<u8>) -> Self {
-        Self {
+        let instance = Self {
             request_type: Type::Message,
             content: data.clone(),
-        }
+        };
+        log::trace!("Request::new_message({}) => {:?}", data.len(), instance);
+        instance
     }
 
     pub(crate) fn new_share_connection(peers: &Vec<RemotePeer>) -> Self {
@@ -89,10 +101,16 @@ impl Request {
             content.append(&mut remote.addr.to_string().as_bytes().to_vec());
             content.push(',' as u8);
         }
-        Self {
+        let instance = Self {
             request_type: Type::ShareConnection,
+            content: content.clone(),
+        };
+        log::trace!(
+            "Request::new_share_connection({:?}) => {:?}",
             content,
-        }
+            instance
+        );
+        instance
     }
 
     pub(crate) fn to_peers_values(&self) -> Vec<SocketAddr> {
@@ -110,23 +128,29 @@ impl Request {
                 current.push(b);
             }
         }
+        log::trace!("Request::to_peers_values() => {:?}", res);
         res
     }
 
     pub(crate) fn parse_public_key(&self) -> Vec<u8> {
         let content = self.content.clone();
         let (public_key_size, next_index) = Decoder::get_size(&content, 0);
-        content[next_index..next_index + public_key_size].to_vec()
+        let pk = content[next_index..next_index + public_key_size].to_vec();
+        log::trace!("Request::parse_public_key() => {}", pk.len());
+        pk
     }
 
     pub(crate) fn to_message_event(&self, remote: &RemotePeer) -> Message {
-        Message {
+        let message = Message {
             from: remote.clone(),
             content: self.content.clone(),
-        }
+        };
+        log::trace!("Request::to_message_event({:?}) => {:?}", remote, message);
+        message
     }
 
     pub(crate) fn send(&self, socket: &UdpSocket, addr: &SocketAddr, public_key: &Vec<u8>) -> () {
+        log::trace!("Request::send({:?}, {addr}, {})", socket, public_key.len());
         let parts = Multipart::split(self, public_key, addr);
         for part in parts {
             socket.send_to(&part.to_data(), addr).unwrap_or_else(|e| {
@@ -145,13 +169,17 @@ pub struct Response {
 
 impl Response {
     pub fn text(value: &str) -> Self {
-        Self {
+        let instance = Self {
             address: None,
             data: value.as_bytes().to_vec(),
-        }
+        };
+        log::trace!("Response::text({value}) => {:?}", instance);
+        instance
     }
 
     pub(crate) fn to_request(&self) -> Request {
-        Request::new_message(&self.data)
+        let req = Request::new_message(&self.data);
+        log::trace!("Response::to_request() => {:?}", req);
+        req
     }
 }

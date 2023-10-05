@@ -1,4 +1,3 @@
-use log::debug;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -22,9 +21,8 @@ impl DisconnectionService {
     where
         O: Observer,
     {
-        debug!("DISCONNECTION from {remote_addr}");
         let exist = remote::select_by_address(&instance.pool, remote_addr).await;
-        if exist.is_empty() {
+        let res = if exist.is_empty() {
             (None, vec![])
         } else {
             let remote = exist.get(0).unwrap();
@@ -34,12 +32,17 @@ impl DisconnectionService {
             } else {
                 // Send disconnection to remote too
                 Request::new_disconnection().send(&instance.socket, &remote.addr, &vec![]);
-                debug!("Fire event : on_disconnected({:?})", remote);
                 (
                     observer.lock().unwrap().on_disconnected(remote).await,
                     vec![],
                 )
             }
-        }
+        };
+        log::trace!(
+            "DisconnectionService::execute({:?}, {remote_addr}, observer) => {:?}",
+            instance,
+            res
+        );
+        res
     }
 }

@@ -14,6 +14,7 @@ fn calculate_size(public_key: &Vec<u8>) -> usize {
     } else {
         256 as usize
     };
+    log::trace!("calculate_size({}) => {size}", public_key.len());
     size
 }
 
@@ -51,6 +52,12 @@ impl Multipart {
                 sender: addr.clone(),
             })
         }
+        log::trace!(
+            "Multipart::split({:?}, {}, {addr}) => {:?}",
+            request,
+            public_key.len(),
+            parts
+        );
         parts
     }
 
@@ -71,13 +78,20 @@ impl Multipart {
                 }
             })
             .collect::<Vec<u8>>();
-        (
+        let res = (
             Request {
                 request_type,
                 content: data,
             },
             addr,
-        )
+        );
+        log::trace!(
+            "Multipart::merge({:?}, {}) => {:?}",
+            parts,
+            private_key.size(),
+            res
+        );
+        res
     }
 }
 

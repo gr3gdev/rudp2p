@@ -14,6 +14,7 @@ pub(crate) fn generate_uid(prefix: &str) -> String {
             .to_string()
             .as_str(),
     );
+    log::trace!("generate_uid({prefix}) => {uid}");
     uid
 }
 
@@ -25,19 +26,19 @@ mod tests {
 
     #[test]
     fn add() {
-        let list = Encoder::add(Vec::new(), vec![1, 2, 3]);
+        let list = Encoder::add(&Vec::new(), &vec![1, 2, 3]);
         assert_eq!(vec![1, 2, 3], list);
     }
 
     #[test]
     fn add_size() {
-        let list = Encoder::add_size(Vec::new(), 3);
+        let list = Encoder::add_size(&Vec::new(), 3);
         assert_eq!(vec![3, 0, 0, 0, 0, 0, 0, 0], list);
     }
 
     #[test]
     fn add_with_size() {
-        let list = Encoder::add_with_size(Vec::new(), vec![1, 2, 3]);
+        let list = Encoder::add_with_size(&Vec::new(), &vec![1, 2, 3]);
         assert_eq!(vec![3, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3], list);
     }
 

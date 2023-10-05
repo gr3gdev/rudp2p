@@ -31,15 +31,14 @@ fn main() {
     let writer = Markdown::new(output);
     futures::executor::block_on(
         PeersWorld::cucumber()
-            .fail_fast()
             .max_concurrent_scenarios(5)
             .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())
             .with_writer(writer)
             .with_default_cli()
             .configure_and_init_tracing(
                 DefaultFields::new(),
-                Format::default().pretty().with_ansi(false),
-                |layer| tracing_subscriber::registry().with(LevelFilter::INFO.and_then(layer)),
+                Format::default().compact().with_ansi(false),
+                |layer| tracing_subscriber::registry().with(LevelFilter::TRACE.and_then(layer)),
             )
             .run("features"),
     );

@@ -29,7 +29,7 @@ harness = false
 required-features = ["mysql"]
 
 [features]
-default = ["mysql"]
+default = ["sqlite"]
 sqlite = ["dep:r2d2_sqlite", "dep:rusqlite"]
 mysql = ["dep:r2d2_mysql", "dep:mysql"]
 

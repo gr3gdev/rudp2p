@@ -1,4 +1,3 @@
-use log::debug;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -24,15 +23,20 @@ impl MessageService {
         O: Observer,
     {
         let remotes = remote::select_by_address(&instance.pool, remote_addr).await;
-        debug!("MESSAGE from {}", remote_addr);
-        if !remotes.is_empty() {
+        let res = if !remotes.is_empty() {
             let remote = remotes.get(0).unwrap();
             let message = request.to_message_event(remote);
-            debug!("Fire event : on_message({:?})", message);
             let res = observer.lock().unwrap().on_message(&message).await;
             (res, remote.public_key.clone())
         } else {
             (None, vec![])
-        }
+        };
+        log::trace!(
+            "MessageService::execute({:?}, {:?}, {remote_addr}, observer) => {:?}",
+            instance,
+            request,
+            res
+        );
+        res
     }
 }

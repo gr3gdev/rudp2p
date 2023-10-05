@@ -5,6 +5,11 @@ use crate::{
 };
 use std::{cmp::Ordering, fmt::Debug, net::SocketAddr};
 
+#[cfg(feature = "mysql")]
+use mysql::{params, Result, Row};
+#[cfg(feature = "sqlite")]
+use rusqlite::{Result, Row};
+
 #[derive(Clone, Eq, PartialEq, Ord)]
 pub(crate) struct RequestPart {
     pub(crate) uid: String,
@@ -33,11 +38,12 @@ impl RequestPart {
     pub(crate) fn to_data(&self) -> Vec<u8> {
         let mut data = Vec::new();
         data.push(self.request_type.to_code());
-        let data = Encoder::add_with_size(data, self.uid.as_bytes().to_vec());
-        let data = Encoder::add_size(data, self.start);
-        let data = Encoder::add_size(data, self.total);
-        let mut data = Encoder::add_size(data, self.content_size);
+        let data = Encoder::add_with_size(&data, &self.uid.as_bytes().to_vec());
+        let data = Encoder::add_size(&data, self.start);
+        let data = Encoder::add_size(&data, self.total);
+        let mut data = Encoder::add_size(&data, self.content_size);
         data.append(&mut self.content.clone());
+        log::trace!("RequestPart::to_data() => {}", data.len());
         data
     }
 
@@ -49,7 +55,7 @@ impl RequestPart {
         let (start, next_index) = Decoder::get_size(&data, next_index + uid_size);
         let (total, next_index) = Decoder::get_size(&data, next_index);
         let (content_size, next_index) = Decoder::get_size(&data, next_index);
-        Self {
+        let res = Self {
             uid,
             request_type,
             start,
@@ -57,7 +63,9 @@ impl RequestPart {
             content_size,
             content: data[next_index..].to_vec(),
             sender: addr,
-        }
+        };
+        log::trace!("RequestPart::parse({}, {addr}) => {:?}", data.len(), res);
+        res
     }
 }
 
@@ -73,121 +81,118 @@ impl PartialOrd for RequestPart {
     }
 }
 
-#[cfg(feature = "sqlite")]
-pub(crate) async fn create_or_upgrade(pool: &Pool) -> () {
-    let sql = "
-    CREATE TABLE IF NOT EXISTS request_part (
-        id INTEGER PRIMARY KEY,
-        uid TEXT,
-        type INTEGER,
-        start INTEGER,
-        total INTEGER,
-        content_size INTEGER,
-        content TEXT,
-        sender TEXT
-    )";
-    execute(pool, sql, {}).await;
+enum Queries {
+    CreateOrUpgrade,
+    SelectByUid,
+    Add,
+    RemoveByUid,
 }
 
-#[cfg(feature = "mysql")]
+impl ToSql for Queries {
+    fn to_sql(&self) -> &str {
+        match self {
+            Queries::CreateOrUpgrade => {
+                if cfg!(feature = "mysql") {
+                    "CREATE TABLE IF NOT EXISTS request_part (
+                        id INTEGER NOT NULL AUTO_INCREMENT,
+                        uid VARCHAR(24),
+                        type INTEGER,
+                        start INTEGER,
+                        total INTEGER,
+                        content_size INTEGER,
+                        content BLOB(1024),
+                        sender VARCHAR(24),
+                        PRIMARY KEY (id)
+                    )"
+                } else {
+                    "CREATE TABLE IF NOT EXISTS request_part (
+                        id INTEGER PRIMARY KEY,
+                        uid TEXT,
+                        type INTEGER,
+                        start INTEGER,
+                        total INTEGER,
+                        content_size INTEGER,
+                        content TEXT,
+                        sender TEXT
+                    )"
+                }
+            }
+            Queries::SelectByUid => "SELECT DISTINCT uid, type, start, total, content_size, content, sender FROM request_part WHERE uid = :uid",
+            Queries::Add => "INSERT INTO request_part (uid, type, start, total, content_size, content, sender) VALUES (:uid, :type, :start, :total, :content_size, :content, :sender)",
+            Queries::RemoveByUid => "DELETE FROM request_part WHERE uid = :uid",
+        }
+    }
+}
+
+fn mapper(row: &Row) -> Result<RequestPart> {
+    let uid = row.get(0).expect("Unable to read 'uid'");
+    let request_type = row.get(1).expect("Unable to read 'type'");
+    let start = row.get(2).expect("Unable to read 'start'");
+    let total = row.get(3).expect("Unable to read 'total'");
+    let content_size = row.get(4).expect("Unable to read 'content_size'");
+    let content = row.get(5).expect("Unable to read 'content'");
+    let sender: String = row.get(6).expect("Unable to read 'sender'");
+    Ok(RequestPart {
+        uid,
+        request_type,
+        start,
+        total,
+        content_size,
+        content,
+        sender: sender.parse().unwrap(),
+    })
+}
+
 pub(crate) async fn create_or_upgrade(pool: &Pool) {
-    let sql = "
-    CREATE TABLE IF NOT EXISTS request_part (
-        id INTEGER NOT NULL AUTO_INCREMENT,
-        uid TEXT,
-        type INTEGER,
-        start INTEGER,
-        total INTEGER,
-        content_size INTEGER,
-        content TEXT,
-        sender TEXT,
-        PRIMARY KEY (id)
-    )";
-    execute(pool, sql, {}).await;
-}
-
-#[cfg(feature = "sqlite")]
-fn mapper(row: &rusqlite::Row<'_>) -> RequestPart {
-    let uid = row.get(0).expect("Unable to read 'uid'");
-    let request_type = row.get(1).expect("Unable to read 'type'");
-    let start = row.get(2).expect("Unable to read 'start'");
-    let total = row.get(3).expect("Unable to read 'total'");
-    let content_size = row.get(4).expect("Unable to read 'content_size'");
-    let content = row.get(5).expect("Unable to read 'content'");
-    let sender: String = row.get(6).expect("Unable to read 'sender'");
-    RequestPart {
-        uid,
-        request_type,
-        start,
-        total,
-        content_size,
-        content,
-        sender: sender.parse().unwrap(),
-    }
-}
-
-#[cfg(feature = "mysql")]
-fn mapper(row: mysql::Row) -> RequestPart {
-    let uid = row.get(0).expect("Unable to read 'uid'");
-    let request_type = row.get(1).expect("Unable to read 'type'");
-    let start = row.get(2).expect("Unable to read 'start'");
-    let total = row.get(3).expect("Unable to read 'total'");
-    let content_size = row.get(4).expect("Unable to read 'content_size'");
-    let content = row.get(5).expect("Unable to read 'content'");
-    let sender: String = row.get(6).expect("Unable to read 'sender'");
-    RequestPart {
-        uid,
-        request_type,
-        start,
-        total,
-        content_size,
-        content,
-        sender: sender.parse().unwrap(),
-    }
+    execute(pool, Queries::CreateOrUpgrade, EMPTY).await;
 }
 
 #[cfg(feature = "sqlite")]
 pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RequestPart> {
-    let sql = "SELECT DISTINCT uid, type, start, total, content_size, content, sender FROM request_part WHERE uid = ?1";
-    prepare(pool, sql, [uid], |row| Ok(mapper(row))).await
+    prepare(
+        pool,
+        Queries::SelectByUid,
+        rusqlite::named_params! {":uid": uid},
+        mapper,
+    )
+    .await
 }
 
 #[cfg(feature = "mysql")]
 pub(crate) async fn select_by_uid(pool: &Pool, uid: &String) -> Vec<RequestPart> {
-    use mysql::params;
-
-    let sql = "SELECT DISTINCT uid, type, start, total, content_size, content, sender FROM request_part WHERE uid = :uid";
-    prepare(pool, sql, params! { "uid" => uid }, |row| Ok(mapper(row))).await
+    prepare(
+        pool,
+        Queries::SelectByUid,
+        mysql::params! {"uid" => uid},
+        mapper,
+    )
+    .await
 }
 
 #[cfg(feature = "sqlite")]
 pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
-    let sql = "INSERT INTO request_part (uid, type, start, total, content_size, content, sender) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
     execute(
         pool,
-        sql,
-        (
-            part.uid.clone(),
-            part.request_type.clone(),
-            part.start,
-            part.total,
-            part.content_size,
-            part.content.clone(),
-            part.sender.to_string(),
-        ),
+        Queries::Add,
+        rusqlite::named_params! {
+            ":uid": part.uid.clone(),
+            ":type": part.request_type.clone(),
+            ":start": part.start,
+            ":total": part.total,
+            ":content_size": part.content_size,
+            ":content": part.content.clone(),
+            ":sender": part.sender.to_string(),
+        },
     )
     .await
 }
 
 #[cfg(feature = "mysql")]
 pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
-    use mysql::params;
-
-    let sql = "INSERT INTO request_part (uid, type, start, total, content_size, content, sender) VALUES (:uid, :type, :start, :total, :content_size, :content, :sender)";
     execute(
         pool,
-        sql,
-        params! {
+        Queries::Add,
+        mysql::params! {
             "uid" => part.uid.clone(),
             "type" => part.request_type.clone(),
             "start" => part.start,
@@ -202,22 +207,24 @@ pub(crate) async fn add(pool: &Pool, part: &RequestPart) -> usize {
 
 #[cfg(feature = "sqlite")]
 pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
-    let sql = "DELETE FROM request_part WHERE uid = ?1";
-    execute(pool, sql, [uid]).await
+    execute(
+        pool,
+        Queries::RemoveByUid,
+        rusqlite::named_params! {":uid": uid},
+    )
+    .await
 }
 
 #[cfg(feature = "mysql")]
 pub(crate) async fn remove_by_uid(pool: &Pool, uid: &String) -> usize {
-    use mysql::params;
-
-    let sql = "DELETE FROM request_part WHERE uid = :uid";
-    execute(pool, sql, params! { "uid" => uid }).await
+    execute(pool, Queries::RemoveByUid, mysql::params! {"uid" => uid}).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::RequestPart;
-    use crate::network::request::Type;
+    use crate::{configuration::Configuration, dao, network, utils::generate_uid};
+    use futures::executor::block_on;
 
     #[test]
     fn parse() {
@@ -225,7 +232,7 @@ mod tests {
         let address = "127.0.0.1:9999".parse().unwrap();
         let part = RequestPart {
             uid: String::from("PART4TEST"),
-            request_type: Type::Connection,
+            request_type: network::request::Type::Connection,
             start: 0,
             total: 256,
             content_size: content.len(),
@@ -235,5 +242,42 @@ mod tests {
         let data = part.to_data();
         let parse = RequestPart::parse(data, address);
         assert_eq!(part, parse);
+    }
+
+    #[cfg(feature = "mysql")]
+    fn init_configuration() -> Configuration {
+        Configuration::builder()
+            .database("mysql://cucumber:test@localhost:3388/tests")
+            .build()
+    }
+
+    #[cfg(feature = "sqlite")]
+    fn init_configuration() -> Configuration {
+        Configuration::builder().build()
+    }
+
+    #[test]
+    fn add_and_remove_part() {
+        block_on(async {
+            let configuration = init_configuration();
+            let pool = dao::init(&configuration).await;
+            let text = String::from("this is a test message");
+            let uid = generate_uid("P");
+            let part = dao::part::RequestPart {
+                uid: uid.clone(),
+                request_type: network::request::Type::Message,
+                start: 0,
+                total: text.len(),
+                content_size: text.len(),
+                content: text.as_bytes().to_vec(),
+                sender: "127.0.0.1:9000".parse().unwrap(),
+            };
+            dao::part::add(&pool, &part).await;
+            let parts = dao::part::select_by_uid(&pool, &uid).await;
+            assert!(parts.len() == 1);
+            assert_eq!(&part, parts.get(0).unwrap());
+            let nb = dao::part::remove_by_uid(&pool, &uid).await;
+            assert_eq!(1, nb);
+        });
     }
 }

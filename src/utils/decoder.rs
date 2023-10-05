@@ -18,12 +18,14 @@ impl Decoder {
             list[index + 6],
             list[index + 7],
         ]);
-        (size, index + 8)
+        let res = (size, index + 8);
+        log::trace!("get_size({}, {index}) => {:?}", list.len(), res);
+        res
     }
 
     pub(crate) fn decrypt(rsa: &Rsa<Private>, data: &Vec<u8>, original_size: usize) -> Vec<u8> {
         let mut buf = vec![0; rsa.size() as usize];
-        match rsa.private_decrypt(&data, &mut buf, Padding::PKCS1) {
+        let res = match rsa.private_decrypt(&data, &mut buf, Padding::PKCS1) {
             Ok(_) => {
                 buf.truncate(original_size);
                 buf
@@ -32,6 +34,8 @@ impl Decoder {
                 error!("{e}");
                 vec![]
             }
-        }
+        };
+        log::trace!("decrypt({}, {original_size}) => {:?}", rsa.size(), res);
+        res
     }
 }

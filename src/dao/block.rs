@@ -1,60 +1,99 @@
 use super::*;
 use std::net::SocketAddr;
 
+#[cfg(feature = "mysql")]
+use mysql::{params, Result, Row};
 #[cfg(feature = "sqlite")]
-pub(crate) async fn create_or_upgrade(pool: &Pool) -> () {
-    let sql = "
-    CREATE TABLE IF NOT EXISTS block_peer (
-        id INTEGER PRIMARY KEY,
-        address TEXT
-    )";
-    execute(pool, sql, {}).await;
+use rusqlite::{Result, Row};
+
+enum Queries {
+    CreateOrUpgrade,
+    SelectAll,
+    Add,
+    Remove,
 }
 
-#[cfg(feature = "mysql")]
+impl ToSql for Queries {
+    fn to_sql(&self) -> &str {
+        match self {
+            Queries::CreateOrUpgrade => {
+                if cfg!(feature = "sqlite") {
+                    "CREATE TABLE IF NOT EXISTS block_peer (
+                    id INTEGER PRIMARY KEY,
+                    address TEXT
+                )"
+                } else {
+                    "CREATE TABLE IF NOT EXISTS block_peer (
+                    id INTEGER NOT NULL AUTO_INCREMENT,
+                    address TEXT,
+                    PRIMARY KEY (id)
+                )"
+                }
+            }
+            Queries::SelectAll => "SELECT address FROM block_peer",
+            Queries::Add => "INSERT INTO block_peer (address) VALUES (:address)",
+            Queries::Remove => "DELETE FROM block_peer WHERE address = :address",
+        }
+    }
+}
+
+fn mapper(row: &Row) -> Result<SocketAddr> {
+    let address: String = row.get(0).expect("Unable to read 'address'");
+    Ok(address.parse().expect("Unable to parse 'address'"))
+}
+
 pub(crate) async fn create_or_upgrade(pool: &Pool) {
-    let sql = "
-    CREATE TABLE IF NOT EXISTS block_peer (
-        id INTEGER NOT NULL AUTO_INCREMENT,
-        address TEXT,
-        PRIMARY KEY (id)
-    )";
-    execute(pool, sql, {}).await;
+    execute(pool, Queries::CreateOrUpgrade, EMPTY).await;
 }
 
 pub(crate) async fn select_all(pool: &Pool) -> Vec<SocketAddr> {
-    let sql = "SELECT address FROM block_peer";
-    prepare(pool, sql, {}, |row| {
-        let address: String = row.get(0).expect("Unable to read 'address'");
-        Ok(address.parse().expect("Unable to parse address"))
-    })
+    prepare(pool, Queries::SelectAll, EMPTY, mapper).await
+}
+
+#[cfg(feature = "sqlite")]
+pub(crate) async fn add(pool: &Pool, address: &SocketAddr) -> usize {
+    execute(
+        pool,
+        Queries::Add,
+        rusqlite::named_params! {
+            ":address": address.to_string()
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "mysql")]
+pub(crate) async fn add(pool: &Pool, address: &SocketAddr) -> usize {
+    execute(
+        pool,
+        Queries::Add,
+        mysql::params! {
+            "address" => address.to_string()
+        },
+    )
     .await
 }
 
 #[cfg(feature = "sqlite")]
-pub(crate) async fn add(pool: &Pool, address: &SocketAddr) -> usize {
-    let sql = "INSERT INTO block_peer (address) VALUES (?1)";
-    execute(pool, sql, [address.to_string()]).await
-}
-
-#[cfg(feature = "mysql")]
-pub(crate) async fn add(pool: &Pool, address: &SocketAddr) -> usize {
-    use mysql::params;
-
-    let sql = "INSERT INTO block_peer (address) VALUES (:address)";
-    execute(pool, sql, params! { "address" => address.to_string() }).await
-}
-
-#[cfg(feature = "sqlite")]
 pub(crate) async fn remove(pool: &Pool, address: &SocketAddr) -> usize {
-    let sql = "DELETE FROM block_peer WHERE address = ?1";
-    execute(pool, sql, [address.to_string()]).await
+    execute(
+        pool,
+        Queries::Remove,
+        rusqlite::named_params! {
+            ":address": address.to_string()
+        },
+    )
+    .await
 }
 
 #[cfg(feature = "mysql")]
 pub(crate) async fn remove(pool: &Pool, address: &SocketAddr) -> usize {
-    use mysql::params;
-
-    let sql = "DELETE FROM block_peer WHERE address = :address";
-    execute(pool, sql, params! { "address" => address.to_string() }).await
+    execute(
+        pool,
+        Queries::Remove,
+        mysql::params! {
+            "address" => address.to_string()
+        },
+    )
+    .await
 }

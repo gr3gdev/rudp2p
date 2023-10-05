@@ -1,3 +1,7 @@
+-- TU
+CREATE DATABASE IF NOT EXISTS tests;
+GRANT ALL PRIVILEGES ON tests.* TO 'cucumber'@'%' IDENTIFIED BY 'test';
+
 -- 01 - Dispatch connections
 CREATE DATABASE IF NOT EXISTS peer_9000;
 GRANT ALL PRIVILEGES ON peer_9000.* TO 'cucumber'@'%' IDENTIFIED BY 'test';

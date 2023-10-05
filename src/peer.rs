@@ -1,14 +1,8 @@
-use crate::{
-    configuration::Configuration,
-    dao::{block, remote, thread, Pool},
-    network::*,
-    observer::Observer,
-    thread::{start_socket_job, stop_job},
-};
-use log::{debug, error, info};
+use crate::{configuration::Configuration, dao, network::*, observer::Observer, thread};
 use std::{
     fmt::Debug,
-    net::{IpAddr, SocketAddr, UdpSocket}, sync::Arc,
+    net::{IpAddr, SocketAddr, UdpSocket},
+    sync::Arc,
 };
 
 /// # Peer
@@ -80,7 +74,7 @@ pub struct Peer {
     /// PEM of the public key for remote encryption.
     public_key_pem: Vec<u8>,
     /// Database pool.
-    pool: Arc<Pool>,
+    pool: Arc<dao::Pool>,
 }
 
 impl Debug for Peer {
@@ -112,7 +106,7 @@ impl Peer {
         let addr = "127.0.0.1"
             .parse::<IpAddr>()
             .or_else(|e| {
-                error!("Unable to initialize IP address : {e}");
+                log::error!("Unable to initialize IP address : {e}");
                 Err("Unable to initialize IP address")
             })
             .unwrap();
@@ -120,83 +114,93 @@ impl Peer {
         // New UDP socket
         let socket = UdpSocket::bind(SocketAddr::new(addr, configuration.port))
             .or_else(|e| {
-                error!("Unable to bind socket on port : {e}");
+                log::error!("Unable to bind socket on port : {e}");
                 Err("Unable to bind socket on port")
             })
             .unwrap();
 
         // Start thread for processing messages
-        let instance = start_socket_job(&configuration, &socket, observer).await;
+        let instance = thread::start_socket_job(&configuration, &socket, observer).await;
 
         // Return Peer
-        Peer {
+        let peer = Peer {
             udp_socket: socket,
             public_key_pem: instance.public_key,
             pool: instance.pool,
-        }
+        };
+        log::trace!("Peer::new({:?}, observer) => {:?}", configuration, peer);
+        peer
     }
 
     pub async fn is_alive(&self) -> bool {
-        thread::status(&self.pool).await
+        let alive = dao::thread::status(&self.pool).await;
+        log::trace!("Peer::is_alive() => {alive}");
+        alive
     }
 
     pub fn connect_to(&self, addr: &SocketAddr) -> () {
-        info!("connect to {}", addr);
+        log::trace!("Peer::connect_to({addr})");
         let request = Request::new_connection(&self.public_key_pem);
         request.send(&self.udp_socket, &addr, &vec![]);
     }
 
     fn send(&self, request: Request, remote_peers: Vec<RemotePeer>) -> () {
+        log::trace!("Peer::send({:?}, {:?})", request, remote_peers);
         for remote in remote_peers {
-            debug!("Send {:?} to {:?}", request, remote);
             request.send(&self.udp_socket, &remote.addr, &remote.public_key);
         }
     }
 
     pub async fn send_to(&self, request: Request, remote_address: &SocketAddr) -> () {
+        log::trace!("Peer::send_to({:?}, {remote_address})", request);
         let request = Request::new_message(&request.content);
-        let remotes = remote::select_by_address(&self.pool, &remote_address).await;
+        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
         self.send(request, remotes);
     }
 
     pub async fn send_to_all(&self, request: &Request) -> () {
+        log::trace!("Peer::send_to_all({:?})", request);
         let request = Request::new_message(&request.content);
-        let remote_peers = remote::select_all(&self.pool).await;
+        let remote_peers = dao::remote::select_all(&self.pool).await;
         self.send(request, remote_peers);
     }
 
     pub async fn disconnect_to(&self, remote_address: &SocketAddr) -> () {
+        log::trace!("Peer::disconnect_to({remote_address})");
         let request = Request::new_disconnection();
-        let remotes = remote::select_by_address(&self.pool, &remote_address).await;
+        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
         self.send(request, remotes);
     }
 
     pub async fn disconnect_to_all(&self) -> () {
+        log::trace!("Peer::disconnect_to_all()");
         let request = Request::new_disconnection();
-        let remote_peers = remote::select_all(&self.pool).await;
+        let remote_peers = dao::remote::select_all(&self.pool).await;
         self.send(request, remote_peers);
     }
 
     pub fn addr(&self) -> SocketAddr {
-        self.udp_socket.local_addr().unwrap()
+        let addr = self.udp_socket.local_addr().unwrap();
+        log::trace!("Peer::addr() => {addr}");
+        addr
     }
 
     pub async fn block(&self, remote_address: &SocketAddr) -> () {
-        let remotes = remote::select_by_address(&self.pool, &remote_address).await;
+        log::trace!("Peer::block({remote_address})");
+        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
         for remote in remotes {
-            debug!("Block {remote_address}");
             self.disconnect_to(remote_address).await;
-            if block::add(&self.pool, &remote.addr).await < 1 {
+            if dao::block::add(&self.pool, &remote.addr).await < 1 {
                 log::error!("[DAO] Unable to block {:?}", remote);
             }
         }
     }
 
     pub async fn unblock(&self, remote_address: &SocketAddr) -> () {
-        let blocked_addresses = block::select_all(&self.pool).await;
+        log::trace!("Peer::unblock({remote_address})");
+        let blocked_addresses = dao::block::select_all(&self.pool).await;
         if blocked_addresses.contains(remote_address) {
-            debug!("Unblock {remote_address}");
-            if block::remove(&self.pool, &remote_address).await < 1 {
+            if dao::block::remove(&self.pool, &remote_address).await < 1 {
                 log::error!("[DAO] Unable to unblock {}", remote_address);
             } else {
                 self.connect_to(remote_address);
@@ -205,7 +209,8 @@ impl Peer {
     }
 
     pub fn close(&self) -> () {
-        stop_job(&self.udp_socket);
+        log::trace!("Peer::close()");
+        thread::stop_job(&self.udp_socket);
     }
 }
 
