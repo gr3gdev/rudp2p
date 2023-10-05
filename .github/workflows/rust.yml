@@ -31,6 +31,7 @@ jobs:
         run: |
           git config --local user.name "GitHub Action [bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git add mysql.md sqlite.md
+          git config advice.addIgnoredFile false
+          git add -f mysql.md sqlite.md
           git commit -m "Add cucumber reports"
-          git push -f origin master
+          git push origin master
