@@ -20,10 +20,10 @@ jobs:
         run: cargo build --verbose
       - name: Prepare tests
         run: docker-compose -f tests/compose.yml up -d
-      - name: Run tests
-        run: |
-          cargo test --features="sqlite" --no-default-features
-          cargo test --features="mysql" --no-default-features
+      - name: Run tests with feature "sqlite"
+        run: cargo test --features="sqlite" --no-default-features
+      - name: Run tests with feature "mysql"
+        run: cargo test --features="mysql" --no-default-features
       - name: Clear tests
         run: docker-compose -f tests/compose.yml down
       - name: Push reports
