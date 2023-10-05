@@ -38,7 +38,7 @@ fn main() {
             .configure_and_init_tracing(
                 DefaultFields::new(),
                 Format::default().compact().with_ansi(false),
-                |layer| tracing_subscriber::registry().with(LevelFilter::TRACE.and_then(layer)),
+                |layer| tracing_subscriber::registry().with(LevelFilter::INFO.and_then(layer)),
             )
             .run("features"),
     );

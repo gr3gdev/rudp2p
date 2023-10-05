@@ -5,15 +5,5 @@
 RUDP2P is a Rust library for P2P exchange with the UDP protocol.
 
 ## Features
-
-- [X] Dispatch connections
-    - [X] Reception of connection and disconnection events
-
-- [X] Block peers
-    - [X] A block peer does not receive any messages until he has unblock
-    - [X] A block peer can not send any messages until he has unblock
-
-- [X] Exchange messages
-    - [X] A peer sends a text to all peers
-    - [X] A peer sends a file to a peer
-
+- [sqlite (default)](./sqlite.md)
+- [mysql](./mysql.md)
