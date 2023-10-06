@@ -7,3 +7,4 @@ RUDP2P is a Rust library for P2P exchange with the UDP protocol.
 ## Features
 - [sqlite (default)](./sqlite.md)
 - [mysql](./mysql.md)
+- ssl
