@@ -1,4 +1,4 @@
-use log::error;
+#[cfg(feature = "ssl")]
 use openssl::rsa::{Padding, Rsa};
 
 pub(crate) struct Encoder;
@@ -34,6 +34,7 @@ impl Encoder {
         list
     }
 
+    #[cfg(feature = "ssl")]
     pub(crate) fn encrypt(public_key_pem: &[u8], data: &Vec<u8>) -> Vec<u8> {
         let res = match Rsa::public_key_from_pem(public_key_pem) {
             Ok(rsa) => {
@@ -42,13 +43,13 @@ impl Encoder {
                 match rsa.public_encrypt(data.as_slice(), &mut buf, Padding::PKCS1) {
                     Ok(_) => buf,
                     Err(e) => {
-                        error!("{e}");
+                        log::error!("{e}");
                         vec![]
                     }
                 }
             }
             Err(e) => {
-                error!("{e}");
+                log::error!("{e}");
                 vec![]
             }
         };

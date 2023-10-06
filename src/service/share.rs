@@ -1,5 +1,5 @@
 use crate::{
-    network::{Request, Response},
+    network::{send, Request, Response},
     thread::PeerInstance,
 };
 
@@ -12,8 +12,8 @@ impl ShareService {
     ) -> (Option<Response>, Vec<u8>) {
         let remotes = request.to_peers_values();
         for remote in remotes {
-            let req = Request::new_connection(&instance.public_key);
-            req.send(&instance.socket, &remote, &vec![]);
+            let req = Request::new_connection(&instance.configuration);
+            send(&instance.socket, &req, &remote);
         }
         let res = (None, vec![]);
         log::trace!(

@@ -20,8 +20,6 @@ pub(crate) fn generate_uid(prefix: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use openssl::rsa::Rsa;
-
     use crate::utils::{decoder::Decoder, encoder::Encoder};
 
     #[test]
@@ -50,8 +48,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ssl")]
     fn encrypt_decrypt() {
-        let rsa = Rsa::generate(1024).unwrap();
+        let rsa = openssl::rsa::Rsa::generate(1024).unwrap();
         let pk = rsa.public_key_to_pem().unwrap();
         let data = "Simple text's test.".as_bytes().to_vec();
         let encrypted = Encoder::encrypt(&pk, &data);

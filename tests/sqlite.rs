@@ -16,8 +16,20 @@ pub(crate) mod report;
 pub(crate) mod steps;
 pub(crate) mod utils;
 
+#[cfg(not(feature = "ssl"))]
 fn configure(port: u16) -> Configuration {
     Configuration::builder()
+        .port(port)
+        .share_connections(true)
+        .database(rudp2plib::configuration::SqliteMode::Memory)
+        .build()
+}
+
+#[cfg(feature = "ssl")]
+fn configure(port: u16) -> Configuration {
+    use rudp2plib::configuration::SSL;
+
+    Configuration::builder(SSL::default())
         .port(port)
         .share_connections(true)
         .database(rudp2plib::configuration::SqliteMode::Memory)

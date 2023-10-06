@@ -1,6 +1,6 @@
 use crate::{
     dao::remote,
-    network::{Request, Response},
+    network::{Request, Response, send},
     observer::Observer,
     peer::RemotePeer,
     thread::PeerInstance,
@@ -25,7 +25,7 @@ fn share_connection(
     );
     if share_connections {
         let req = Request::new_share_connection(connected_peers);
-        req.send(socket, &addr, &vec![]);
+        send(socket, &req, addr);
     } else {
         log::debug!("share connections is disabled");
     }
@@ -55,11 +55,8 @@ impl ConnectionService {
             // Cache the connection with address and public key
             let remote = remote::add(&instance.pool, &remote_addr, &public_key).await;
             // Send connection to remote too
-            Request::new_connection(&instance.public_key).send(
-                &instance.socket,
-                &remote_addr,
-                &vec![],
-            );
+            let req = Request::new_connection(&instance.configuration);
+            send(&instance.socket, &req, &remote_addr);
             (observer.lock().unwrap().on_connected(&remote).await, vec![])
         } else {
             (None, vec![])

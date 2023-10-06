@@ -1,7 +1,7 @@
 [package]
 name = "rudp2p"
 description = "Library to exchange P2P messages with UDP protocol"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Grégory Tardivel"]
 repository = "https://github.com/gr3gdev/rudp2p"
 edition = "2021"
@@ -30,23 +30,24 @@ required-features = ["mysql"]
 
 [features]
 default = ["sqlite"]
-sqlite = ["dep:r2d2_sqlite", "dep:rusqlite"]
-mysql = ["dep:r2d2_mysql", "dep:mysql"]
+sqlite = ["dep:r2d2", "dep:r2d2_sqlite", "dep:rusqlite"]
+mysql = ["dep:r2d2", "dep:r2d2_mysql", "dep:mysql"]
+ssl = ["dep:openssl", "dep:openssl-sys"]
 
 [dependencies]
 async-trait = "0.1"
 env_logger = "0.10"
 futures = "0.3"
 log = "0.4"
-openssl = "0.10"
-r2d2 = "0.8"
+openssl = { version = "0.10", optional = true }
+openssl-sys = { version = "0.9", optional = true }
+r2d2 = { version = "0.8", optional = true }
 r2d2_sqlite = { version = "0.22", optional = true }
 r2d2_mysql = { version = "24.0", optional = true }
 rusqlite = { version = "0.29", features = ["unlock_notify", "release_memory"], optional = true }
 mysql = { version = "24.0", optional = true }
 
 [dev-dependencies]
-openssl-sys = "0.9"
 cucumber = { version = "0.20", features = ["tracing", "timestamps"] }
 tracing-subscriber = "0.3"
 r2d2_sqlite = "0.22"

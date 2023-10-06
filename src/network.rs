@@ -1,8 +1,5 @@
 use self::{events::*, request::Type};
-use crate::{
-    peer::RemotePeer,
-    utils::{decoder::Decoder, encoder::Encoder, multipart::Multipart},
-};
+use crate::{configuration::Configuration, peer::RemotePeer, utils::multipart::Multipart};
 use log::error;
 use std::{
     fmt::Debug,
@@ -12,6 +9,9 @@ use std::{
 pub mod events;
 pub mod request;
 
+/// # Data
+///
+/// Trait for convert data of a Request or a Response.
 pub trait Data: Debug {
     fn to_vec(&self) -> Vec<u8>;
 }
@@ -34,6 +34,9 @@ impl Data for Vec<u8> {
     }
 }
 
+/// # Request
+///
+/// A request for exchange data with another Peer.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Request {
     pub(crate) request_type: Type,
@@ -50,6 +53,7 @@ impl Debug for Request {
 }
 
 impl Request {
+    /// New Request with Data.
     pub fn new<D>(data: D) -> Self
     where
         D: Data,
@@ -62,16 +66,33 @@ impl Request {
         instance
     }
 
-    pub(crate) fn new_connection(public_key: &Vec<u8>) -> Self {
+    #[cfg(not(feature = "ssl"))]
+    pub(crate) fn new_connection(configuration: &Configuration) -> Self {
+        let instance = Self {
+            request_type: Type::Connection,
+            content: vec![0],
+        };
+        log::trace!(
+            "Request::new_connection({:?}) => {:?}",
+            configuration,
+            instance
+        );
+        instance
+    }
+
+    #[cfg(feature = "ssl")]
+    pub(crate) fn new_connection(configuration: &Configuration) -> Self {
+        use crate::utils::encoder::Encoder;
+
         let content = Vec::new();
-        let content = Encoder::add_with_size(&content, &public_key);
+        let content = Encoder::add_with_size(&content, &configuration.ssl.public_key);
         let instance = Self {
             request_type: Type::Connection,
             content,
         };
         log::trace!(
-            "Request::new_connection({}) => {:?}",
-            public_key.len(),
+            "Request::new_connection({:?}) => {:?}",
+            configuration,
             instance
         );
         instance
@@ -132,7 +153,15 @@ impl Request {
         res
     }
 
+    #[cfg(not(feature = "ssl"))]
     pub(crate) fn parse_public_key(&self) -> Vec<u8> {
+        vec![]
+    }
+
+    #[cfg(feature = "ssl")]
+    pub(crate) fn parse_public_key(&self) -> Vec<u8> {
+        use crate::utils::decoder::Decoder;
+
         let content = self.content.clone();
         let (public_key_size, next_index) = Decoder::get_size(&content, 0);
         let pk = content[next_index..next_index + public_key_size].to_vec();
@@ -149,6 +178,19 @@ impl Request {
         message
     }
 
+    #[cfg(not(feature = "ssl"))]
+    pub(crate) fn send(&self, socket: &UdpSocket, addr: &SocketAddr) -> () {
+        log::trace!("Request::send({:?}, {addr})", socket);
+        let parts = Multipart::split(self, &vec![], addr);
+        for part in parts {
+            socket.send_to(&part.to_data(), addr).unwrap_or_else(|e| {
+                error!("Unable to send request : {e}");
+                0
+            });
+        }
+    }
+
+    #[cfg(feature = "ssl")]
     pub(crate) fn send(&self, socket: &UdpSocket, addr: &SocketAddr, public_key: &Vec<u8>) -> () {
         log::trace!("Request::send({:?}, {addr}, {})", socket, public_key.len());
         let parts = Multipart::split(self, public_key, addr);
@@ -161,6 +203,9 @@ impl Request {
     }
 }
 
+/// # Response
+///
+/// Response send after an event in Observer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Response {
     pub(crate) address: Option<SocketAddr>,
@@ -168,6 +213,7 @@ pub struct Response {
 }
 
 impl Response {
+    /// New Response from text.
     pub fn text(value: &str) -> Self {
         let instance = Self {
             address: None,
@@ -177,9 +223,32 @@ impl Response {
         instance
     }
 
+    /// New Response from Data.
+    pub fn new<D>(data: D) -> Self
+    where
+        D: Data,
+    {
+        let instance = Self {
+            address: None,
+            data: data.to_vec(),
+        };
+        log::trace!("Response::new({:?}) => {:?}", data, instance);
+        instance
+    }
+
     pub(crate) fn to_request(&self) -> Request {
         let req = Request::new_message(&self.data);
         log::trace!("Response::to_request() => {:?}", req);
         req
     }
+}
+
+#[cfg(not(feature = "ssl"))]
+pub(crate) fn send(socket: &UdpSocket, request: &Request, address: &SocketAddr) {
+    request.send(socket, address);
+}
+
+#[cfg(feature = "ssl")]
+pub(crate) fn send(socket: &UdpSocket, request: &Request, address: &SocketAddr) {
+    request.send(socket, address, &vec![]);
 }

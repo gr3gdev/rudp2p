@@ -13,6 +13,35 @@ use crate::{
 pub(crate) struct MessageService;
 
 impl MessageService {
+    #[cfg(not(feature = "ssl"))]
+    pub(crate) async fn execute<O>(
+        instance: &PeerInstance,
+        request: &Request,
+        remote_addr: &SocketAddr,
+        observer: Arc<Mutex<O>>,
+    ) -> (Option<Response>, Vec<u8>)
+    where
+        O: Observer,
+    {
+        let remotes = remote::select_by_address(&instance.pool, remote_addr).await;
+        let res = if !remotes.is_empty() {
+            let remote = remotes.get(0).unwrap();
+            let message = request.to_message_event(remote);
+            let res = observer.lock().unwrap().on_message(&message).await;
+            (res, vec![])
+        } else {
+            (None, vec![])
+        };
+        log::trace!(
+            "MessageService::execute({:?}, {:?}, {remote_addr}, observer) => {:?}",
+            instance,
+            request,
+            res
+        );
+        res
+    }
+
+    #[cfg(feature = "ssl")]
     pub(crate) async fn execute<O>(
         instance: &PeerInstance,
         request: &Request,

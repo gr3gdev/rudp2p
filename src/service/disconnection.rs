@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     dao::remote::{self},
-    network::{Request, Response},
+    network::{Request, Response, send},
     observer::Observer,
     thread::PeerInstance,
 };
@@ -31,7 +31,8 @@ impl DisconnectionService {
                 (None, vec![])
             } else {
                 // Send disconnection to remote too
-                Request::new_disconnection().send(&instance.socket, &remote.addr, &vec![]);
+                let req = Request::new_disconnection();
+                send(&instance.socket, &req, &remote.addr);
                 (
                     observer.lock().unwrap().on_disconnected(remote).await,
                     vec![],

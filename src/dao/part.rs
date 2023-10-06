@@ -244,16 +244,32 @@ mod tests {
         assert_eq!(part, parse);
     }
 
-    #[cfg(feature = "mysql")]
+    #[cfg(all(feature = "mysql", not(feature = "ssl")))]
     fn init_configuration() -> Configuration {
         Configuration::builder()
             .database("mysql://cucumber:test@localhost:3388/tests")
             .build()
     }
 
-    #[cfg(feature = "sqlite")]
+    #[cfg(all(feature = "mysql", feature = "ssl"))]
+    fn init_configuration() -> Configuration {
+        use crate::configuration::SSL;
+
+        Configuration::builder(SSL::from_size(1024))
+            .database("mysql://cucumber:test@localhost:3388/tests")
+            .build()
+    }
+
+    #[cfg(all(feature = "sqlite", not(feature = "ssl")))]
     fn init_configuration() -> Configuration {
         Configuration::builder().build()
+    }
+
+    #[cfg(all(feature = "sqlite", feature = "ssl"))]
+    fn init_configuration() -> Configuration {
+        use crate::configuration::SSL;
+
+        Configuration::builder(SSL::from_size(1024)).build()
     }
 
     #[test]

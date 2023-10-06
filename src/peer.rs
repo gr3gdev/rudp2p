@@ -8,7 +8,7 @@ use std::{
 /// # Peer
 ///
 #[cfg_attr(
-    feature = "sqlite",
+    all(feature = "sqlite", not(feature = "ssl")),
     doc = r##"
 Example of a connection with the sqlite feature
 ```
@@ -71,8 +71,8 @@ fn main() {
 pub struct Peer {
     /// UDP socket.
     udp_socket: UdpSocket,
-    /// PEM of the public key for remote encryption.
-    public_key_pem: Vec<u8>,
+    /// The configuration.
+    configuration: Configuration,
     /// Database pool.
     pool: Arc<dao::Pool>,
 }
@@ -81,7 +81,7 @@ impl Debug for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Peer")
             .field("udp_socket", &self.udp_socket)
-            .field("public_key_pem", &self.public_key_pem.len())
+            .field("configuration", &self.configuration)
             .field("pool", &self.pool)
             .finish()
     }
@@ -91,13 +91,14 @@ impl Clone for Peer {
     fn clone(&self) -> Self {
         Self {
             udp_socket: self.udp_socket.try_clone().expect("Unable to clone socket"),
-            public_key_pem: self.public_key_pem.clone(),
+            configuration: self.configuration.clone(),
             pool: self.pool.clone(),
         }
     }
 }
 
 impl Peer {
+    /// Create a new Peer.
     pub async fn new<O>(configuration: Configuration, observer: O) -> Peer
     where
         O: Observer,
@@ -125,25 +126,47 @@ impl Peer {
         // Return Peer
         let peer = Peer {
             udp_socket: socket,
-            public_key_pem: instance.public_key,
+            configuration: instance.configuration,
             pool: instance.pool,
         };
         log::trace!("Peer::new({:?}, observer) => {:?}", configuration, peer);
         peer
     }
 
+    /// Return true if the Peer is alive.
     pub async fn is_alive(&self) -> bool {
         let alive = dao::thread::status(&self.pool).await;
         log::trace!("Peer::is_alive() => {alive}");
         alive
     }
 
+    /// Connect to another Peer with his address.
+    #[cfg(not(feature = "ssl"))]
     pub fn connect_to(&self, addr: &SocketAddr) -> () {
         log::trace!("Peer::connect_to({addr})");
-        let request = Request::new_connection(&self.public_key_pem);
+        let request = Request::new_connection(&self.configuration);
+        request.send(&self.udp_socket, &addr);
+    }
+
+    /// Connect to another Peer with his address.
+    #[cfg(feature = "ssl")]
+    pub fn connect_to(&self, addr: &SocketAddr) -> () {
+        log::trace!("Peer::connect_to({addr})");
+        let request = Request::new_connection(&self.configuration);
         request.send(&self.udp_socket, &addr, &vec![]);
     }
 
+    /// Send a request to the peers.
+    #[cfg(not(feature = "ssl"))]
+    fn send(&self, request: Request, remote_peers: Vec<RemotePeer>) -> () {
+        log::trace!("Peer::send({:?}, {:?})", request, remote_peers);
+        for remote in remote_peers {
+            request.send(&self.udp_socket, &remote.addr);
+        }
+    }
+
+    /// Send a request to the peers.
+    #[cfg(feature = "ssl")]
     fn send(&self, request: Request, remote_peers: Vec<RemotePeer>) -> () {
         log::trace!("Peer::send({:?}, {:?})", request, remote_peers);
         for remote in remote_peers {
@@ -151,6 +174,7 @@ impl Peer {
         }
     }
 
+    /// Send a request to another Peer with his address.
     pub async fn send_to(&self, request: Request, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::send_to({:?}, {remote_address})", request);
         let request = Request::new_message(&request.content);
@@ -158,6 +182,7 @@ impl Peer {
         self.send(request, remotes);
     }
 
+    /// Send a request to all Peers connected.
     pub async fn send_to_all(&self, request: &Request) -> () {
         log::trace!("Peer::send_to_all({:?})", request);
         let request = Request::new_message(&request.content);
@@ -165,6 +190,7 @@ impl Peer {
         self.send(request, remote_peers);
     }
 
+    /// Disconnect to another Peer with his address.
     pub async fn disconnect_to(&self, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::disconnect_to({remote_address})");
         let request = Request::new_disconnection();
@@ -172,6 +198,7 @@ impl Peer {
         self.send(request, remotes);
     }
 
+    /// Disconnect to all Peers connected.
     pub async fn disconnect_to_all(&self) -> () {
         log::trace!("Peer::disconnect_to_all()");
         let request = Request::new_disconnection();
@@ -179,12 +206,14 @@ impl Peer {
         self.send(request, remote_peers);
     }
 
+    /// Get local address of the sockets.
     pub fn addr(&self) -> SocketAddr {
         let addr = self.udp_socket.local_addr().unwrap();
         log::trace!("Peer::addr() => {addr}");
         addr
     }
 
+    /// Block a remote peer.
     pub async fn block(&self, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::block({remote_address})");
         let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
@@ -196,6 +225,7 @@ impl Peer {
         }
     }
 
+    /// Unblock a remote peer.
     pub async fn unblock(&self, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::unblock({remote_address})");
         let blocked_addresses = dao::block::select_all(&self.pool).await;
@@ -208,16 +238,22 @@ impl Peer {
         }
     }
 
+    /// Close the Peer and stop the socket.
     pub fn close(&self) -> () {
         log::trace!("Peer::close()");
         thread::stop_job(&self.udp_socket);
     }
 }
 
+/// # RemotePeer
+///
+/// A another Peer which is connected with the local Peer.
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct RemotePeer {
     pub(crate) id: i64,
+    /// The remote address.
     pub addr: SocketAddr,
+    #[cfg(feature = "ssl")]
     pub(crate) public_key: Vec<u8>,
 }
 
@@ -248,8 +284,22 @@ mod tests {
         time::{Duration, SystemTime},
     };
 
+    #[cfg(not(feature = "ssl"))]
     fn prepare(port: u16) -> (Peer, Test) {
         let conf = Configuration::builder()
+            .port(port)
+            .share_connections(true)
+            .build();
+        let test = Test::default();
+        let peer = block_on(Peer::new(conf, test.clone()));
+        (peer, test)
+    }
+
+    #[cfg(feature = "ssl")]
+    fn prepare(port: u16) -> (Peer, Test) {
+        use crate::configuration::SSL;
+
+        let conf = Configuration::builder(SSL::from_size(4096))
             .port(port)
             .share_connections(true)
             .build();
@@ -298,12 +348,12 @@ mod tests {
             .unwrap()
             .as_millis();
         while condition() {
-            std::thread::sleep(Duration::from_millis(1000));
+            std::thread::sleep(Duration::from_millis(100));
             let current = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_millis();
-            if current - start > 5000 {
+            if current - start > 10000 {
                 panic!("Timeout !");
             }
         }

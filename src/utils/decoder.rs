@@ -1,4 +1,4 @@
-use log::error;
+#[cfg(feature = "ssl")]
 use openssl::{
     pkey::Private,
     rsa::{Padding, Rsa},
@@ -23,6 +23,7 @@ impl Decoder {
         res
     }
 
+    #[cfg(feature = "ssl")]
     pub(crate) fn decrypt(rsa: &Rsa<Private>, data: &Vec<u8>, original_size: usize) -> Vec<u8> {
         let mut buf = vec![0; rsa.size() as usize];
         let res = match rsa.private_decrypt(&data, &mut buf, Padding::PKCS1) {
@@ -31,7 +32,7 @@ impl Decoder {
                 buf
             }
             Err(e) => {
-                error!("{e}");
+                log::error!("{e}");
                 vec![]
             }
         };

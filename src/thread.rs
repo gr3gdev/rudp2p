@@ -10,7 +10,6 @@ use crate::{
     utils::multipart::Multipart,
 };
 use futures::executor::block_on;
-use openssl::{pkey::Private, rsa::Rsa};
 use std::{
     fmt::Debug,
     io,
@@ -24,8 +23,6 @@ static END: &[u8] = "PL3AZE 5T0P".as_bytes();
 
 pub(crate) struct PeerInstance {
     pub(crate) pool: Arc<dao::Pool>,
-    private_key: Rsa<Private>,
-    pub(crate) public_key: Vec<u8>,
     pub(crate) socket: UdpSocket,
     pub(crate) configuration: Configuration,
 }
@@ -34,8 +31,6 @@ impl Debug for PeerInstance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PeerInstance")
             .field("pool", &self.pool)
-            .field("private_key", &self.private_key.size())
-            .field("public_key", &self.public_key.len())
             .field("socket", &self.socket)
             .field("configuration", &self.configuration)
             .finish()
@@ -46,8 +41,6 @@ impl Clone for PeerInstance {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
-            private_key: self.private_key.clone(),
-            public_key: self.public_key.clone(),
             socket: self.socket.try_clone().unwrap(),
             configuration: self.configuration.clone(),
         }
@@ -55,32 +48,17 @@ impl Clone for PeerInstance {
 }
 
 impl PeerInstance {
-    pub(crate) async fn new(
-        configuration: &Configuration,
-        private_key: Rsa<Private>,
-        socket: &UdpSocket,
-    ) -> Self {
-        // Public key PEM
-        let public_key = private_key
-            .public_key_to_pem()
-            .or_else(|e| {
-                log::error!("Unable to generate public key : {e}");
-                Err("Unable to generate public key")
-            })
-            .unwrap();
-
+    pub(crate) async fn new(configuration: &Configuration, socket: &UdpSocket) -> Self {
         // Init database
         let pool = dao::init(configuration).await;
 
         let instance = Self {
             pool: Arc::new(pool),
-            private_key,
-            public_key,
             socket: socket.try_clone().unwrap(),
             configuration: configuration.clone(),
         };
         log::trace!(
-            "PeerInstance::new({:?}, **private_key**, {:?}) => {:?}",
+            "PeerInstance::new({:?}, {:?}) => {:?}",
             configuration,
             socket,
             instance
@@ -107,16 +85,8 @@ pub(crate) async fn start_socket_job<O>(
 where
     O: Observer,
 {
-    // Generate SSL keys
-    let rsa = Rsa::generate(2048)
-        .or_else(|e| {
-            log::error!("Unable to generate SSL keys : {e}");
-            Err("Unable to generate SSL keys")
-        })
-        .unwrap();
-
     // Init the peer instance for internal threads
-    let instance = PeerInstance::new(configuration, rsa, &socket).await;
+    let instance = PeerInstance::new(configuration, &socket).await;
     let observer = Arc::new(Mutex::new(observer));
     let thread_instance = instance.clone();
 
@@ -188,9 +158,7 @@ async fn save_part_or_break(
             // Receive END
             let peers = dao::remote::select_all(&instance.pool).await;
             for remote in peers {
-                let addr = remote.addr;
-                let request = Request::new_disconnection();
-                request.send(&instance.socket, &addr, &instance.public_key);
+                send_disonnection(instance, remote.addr);
             }
             (ControlFlow::Break(String::from("Receive END")), None)
         } else {
@@ -215,6 +183,22 @@ async fn save_part_or_break(
         res
     );
     res
+}
+
+#[cfg(not(feature = "ssl"))]
+fn send_disonnection(instance: &PeerInstance, addr: SocketAddr) {
+    let request = Request::new_disconnection();
+    request.send(&instance.socket, &addr);
+}
+
+#[cfg(feature = "ssl")]
+fn send_disonnection(instance: &PeerInstance, addr: SocketAddr) {
+    let request = Request::new_disconnection();
+    request.send(
+        &instance.socket,
+        &addr,
+        &instance.configuration.ssl.public_key,
+    );
 }
 
 fn is_complete_parts(parts: &Vec<dao::part::RequestPart>, total: usize) -> bool {
@@ -250,7 +234,7 @@ where
                     log::error!("[DAO] Unable to remove request part {}", part_uid);
                 }
                 // Merge parts into Request
-                let (request, remote_addr) = Multipart::merge(&parts, &instance.private_key);
+                let (request, remote_addr) = Multipart::merge(&parts, &instance.configuration);
                 // Process the request
                 process_request(&instance, &request, &remote_addr, Arc::clone(&observer)).await;
             });
@@ -311,6 +295,20 @@ where
     }
 }
 
+#[cfg(not(feature = "ssl"))]
+async fn process_response(
+    instance: &PeerInstance,
+    addr: &SocketAddr,
+    res: (Option<Response>, Vec<u8>),
+) -> () {
+    log::trace!("process_response({:?}, {addr}, {:?})", instance, res);
+    if let (Some(response), _) = res {
+        let request = response.to_request();
+        request.send(&instance.socket, addr);
+    }
+}
+
+#[cfg(feature = "ssl")]
 async fn process_response(
     instance: &PeerInstance,
     addr: &SocketAddr,

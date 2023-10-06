@@ -46,6 +46,17 @@ impl ToSql for Queries {
     }
 }
 
+#[cfg(not(feature = "ssl"))]
+fn mapper(row: &Row) -> Result<RemotePeer> {
+    let id = row.get(0).expect("Unable to read 'id'");
+    let address: String = row.get(1).expect("Unable to read 'address'");
+    Ok(RemotePeer {
+        id,
+        addr: address.parse().expect("Unable to parse address"),
+    })
+}
+
+#[cfg(feature = "ssl")]
 fn mapper(row: &Row) -> Result<RemotePeer> {
     let id = row.get(0).expect("Unable to read 'id'");
     let address: String = row.get(1).expect("Unable to read 'address'");
