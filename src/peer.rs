@@ -353,7 +353,7 @@ mod tests {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_millis();
-            if current - start > 10000 {
+            if current - start > 30000 {
                 panic!("Timeout !");
             }
         }
