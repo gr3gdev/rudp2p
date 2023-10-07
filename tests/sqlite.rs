@@ -37,7 +37,11 @@ fn configure(port: u16) -> Configuration {
 }
 
 fn main() {
-    let report = "sqlite.md";
+    let report = if cfg!(feature = "ssl") {
+      "reports/sqlite_ssl.md"
+    } else {
+      "reports/sqlite.md"
+    };
     let output = fs::File::create(report).unwrap();
     let writer = Markdown::new(output);
     futures::executor::block_on(
