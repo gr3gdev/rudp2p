@@ -40,9 +40,9 @@ fn configure(port: u16) -> Configuration {
 
 fn main() {
     let report = if cfg!(feature = "ssl") {
-        "mysql_ssl.md"
+        "reports/mysql_ssl.md"
     } else {
-        "mysql.md"
+        "reports/mysql.md"
     };
     let output = fs::File::create(report).unwrap();
     let writer = Markdown::new(output);
