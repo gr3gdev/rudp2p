@@ -1,4 +1,7 @@
-use crate::configuration::Configuration;
+use crate::{
+    configuration::{Configuration, DatabaseUpgradeMode},
+    utils::unwrap::{unwrap_option, unwrap_result},
+};
 use std::time::Duration;
 
 #[cfg(feature = "mysql")]
@@ -42,15 +45,15 @@ pub(crate) async fn get_connection(pool: &Pool) -> Connection {
             count = count + 1;
         }
     }
-    connection.expect("Unable to get a connection")
+    unwrap_option(connection, "Unable to get a connection")
 }
 
-async fn create_or_upgrade_db(pool: &Pool) {
+async fn create_or_upgrade_db(pool: &Pool, database_upgrade_mode: &DatabaseUpgradeMode) {
     log::trace!("create_or_upgrade_db({:?})", pool);
-    remote::create_or_upgrade(pool).await;
-    part::create_or_upgrade(pool).await;
-    block::create_or_upgrade(pool).await;
-    thread::create_or_upgrade(pool).await;
+    remote::create_or_upgrade(pool, database_upgrade_mode).await;
+    part::create_or_upgrade(pool, database_upgrade_mode).await;
+    block::create_or_upgrade(pool, database_upgrade_mode).await;
+    thread::create_or_upgrade(pool, database_upgrade_mode).await;
 }
 
 #[cfg(feature = "sqlite")]
@@ -66,11 +69,11 @@ pub(crate) async fn init(configuration: &Configuration) -> Pool {
             "PRAGMA journal_mode=wal2; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=1;",
         )
     });
-    let pool = Pool::builder()
-        .max_size(16)
-        .build(manager)
-        .expect("Unable to initialize pool");
-    create_or_upgrade_db(&pool).await;
+    let pool = unwrap_result(
+        Pool::builder().max_size(16).build(manager),
+        "Unable to initialize pool",
+    );
+    create_or_upgrade_db(&pool, &configuration.database_upgrade_mode).await;
     log::trace!("init({:?}) => {:?}", configuration, pool);
     pool
 }
@@ -78,15 +81,17 @@ pub(crate) async fn init(configuration: &Configuration) -> Pool {
 #[cfg(feature = "mysql")]
 pub(crate) async fn init(configuration: &Configuration) -> Pool {
     if let Some(url) = &configuration.database_url {
-        let opts = mysql::Opts::from_url(url)
-            .expect(format!("Error when parsing {:?}", configuration).as_str());
+        let opts = unwrap_result(
+            mysql::Opts::from_url(url),
+            format!("Error when parsing {:?}", configuration).as_str(),
+        );
         let params = mysql::OptsBuilder::from_opts(opts);
         let manager = r2d2_mysql::MySqlConnectionManager::new(params);
-        let pool = Pool::builder()
-            .max_size(16)
-            .build(manager)
-            .expect("Unable to initialize pool");
-        create_or_upgrade_db(&pool).await;
+        let pool = unwrap_result(
+            Pool::builder().max_size(16).build(manager),
+            "Unable to initialize pool",
+        );
+        create_or_upgrade_db(&pool, &configuration.database_upgrade_mode).await;
         log::trace!("init({:?}) => {:?}", configuration, pool);
         pool
     } else {
@@ -103,9 +108,10 @@ where
 {
     let sql = sql.to_sql();
     let connection = get_connection(pool).await;
-    let nb_updates = connection
-        .execute(sql, params)
-        .expect(format!("Unable to execute : {sql}").as_str());
+    let nb_updates = unwrap_result(
+        connection.execute(sql, params),
+        format!("Unable to execute : {sql}").as_str(),
+    );
     log::trace!("execute(pool, {sql}, params) => {nb_updates}");
     nb_updates
 }
@@ -118,7 +124,7 @@ pub(crate) async fn execute<S: ToSql>(pool: &Pool, sql: S, params: Params) -> us
     let mut connection = get_connection(pool).await;
     let res = connection.exec_iter(sql, params.clone());
     log::trace!("execute(pool, {sql}, {:?}) => {:?}", params, res);
-    let res = res.expect(format!("Unable to execute : {sql}").as_str());
+    let res = unwrap_result(res, format!("Unable to execute : {sql}").as_str());
     res.affected_rows() as usize
 }
 
@@ -132,13 +138,16 @@ where
 {
     let sql = sql.to_sql();
     let connection = get_connection(pool).await;
-    let mut statement = connection
-        .prepare(sql)
-        .expect(format!("Unable to prepare : {sql}").as_str());
-    let res = statement
-        .query_map(params, |row| f(row))
-        .and_then(Iterator::collect)
-        .expect(format!("Unable to query : {sql}").as_str());
+    let mut statement = unwrap_result(
+        connection.prepare(sql),
+        format!("Unable to prepare : {sql}").as_str(),
+    );
+    let res = unwrap_result(
+        statement
+            .query_map(params, |row| f(row))
+            .and_then(Iterator::collect),
+        format!("Unable to query : {sql}").as_str(),
+    );
     log::trace!("prepare(pool, {sql}, params, mapper) => {:?}", res);
     res
 }
@@ -154,13 +163,14 @@ where
 
     let sql = sql.to_sql();
     let mut connection = get_connection(pool).await;
-    let res = connection
-        .exec_iter(sql, params.clone())
-        .expect(format!("Unable to query : {sql}").as_str());
+    let res = unwrap_result(
+        connection.exec_iter(sql, params.clone()),
+        format!("Unable to query : {sql}").as_str(),
+    );
     let mut result = Vec::new();
     for row in res {
-        let row = row.expect("Unable to read row");
-        let value = mapper(&row).expect(&format!("Unable to map row {:?}", row));
+        let row = unwrap_result(row, "Unable to read row");
+        let value = unwrap_result(mapper(&row), &format!("Unable to map row {:?}", row));
         result.push(value)
     }
     log::trace!("prepare(pool, {sql}, {:?}, mapper) => {:?}", params, result,);

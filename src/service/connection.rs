@@ -1,9 +1,10 @@
 use crate::{
     dao::remote,
-    network::{Request, Response, send},
+    network::{send, Request, Response},
     observer::Observer,
     peer::RemotePeer,
     thread::PeerInstance,
+    utils::unwrap::unwrap_result,
 };
 use std::{
     net::{SocketAddr, UdpSocket},
@@ -57,7 +58,12 @@ impl ConnectionService {
             // Send connection to remote too
             let req = Request::new_connection(&instance.configuration);
             send(&instance.socket, &req, &remote_addr);
-            (observer.lock().unwrap().on_connected(&remote).await, vec![])
+            (
+                unwrap_result(observer.lock(), "Unable to send on_connected event")
+                    .on_connected(&remote)
+                    .await,
+                vec![],
+            )
         } else {
             (None, vec![])
         };
