@@ -1,5 +1,5 @@
 use super::*;
-use crate::peer::RemotePeer;
+use crate::{peer::RemotePeer, configuration::DatabaseUpgradeMode};
 use std::net::SocketAddr;
 
 #[cfg(feature = "mysql")]
@@ -8,6 +8,7 @@ use mysql::{params, Result, Row};
 use rusqlite::{Result, Row};
 
 enum Queries {
+    Drop,
     CreateOrUpgrade,
     SelectAll,
     SelectByAddress,
@@ -18,6 +19,7 @@ enum Queries {
 impl ToSql for Queries {
     fn to_sql(&self) -> &str {
         match self {
+            Queries::Drop => "DROP TABLE IF EXISTS remote_peer",
             Queries::CreateOrUpgrade => {
                 if cfg!(feature = "mysql") {
                     "CREATE TABLE IF NOT EXISTS remote_peer (
@@ -46,30 +48,58 @@ impl ToSql for Queries {
     }
 }
 
-#[cfg(not(feature = "ssl"))]
+#[cfg(all(not(feature = "ssl"), feature = "sqlite"))]
 fn mapper(row: &Row) -> Result<RemotePeer> {
-    let id = row.get(0).expect("Unable to read 'id'");
-    let address: String = row.get(1).expect("Unable to read 'address'");
+    let id = unwrap_result(row.get(0), "Unable to read 'id'");
+    let address: String = unwrap_result(row.get(1), "Unable to read 'address'");
     Ok(RemotePeer {
         id,
-        addr: address.parse().expect("Unable to parse address"),
+        addr: unwrap_result(address.parse(), "Unable to parse address"),
     })
 }
 
-#[cfg(feature = "ssl")]
+#[cfg(all(not(feature = "ssl"), feature = "mysql"))]
 fn mapper(row: &Row) -> Result<RemotePeer> {
-    let id = row.get(0).expect("Unable to read 'id'");
-    let address: String = row.get(1).expect("Unable to read 'address'");
-    let public_key: String = row.get(2).expect("Unable to read 'public_key'");
+    let id = unwrap_option(row.get(0), "Unable to read 'id'");
+    let address: String = unwrap_option(row.get(1), "Unable to read 'address'");
     Ok(RemotePeer {
         id,
-        addr: address.parse().expect("Unable to parse address"),
+        addr: unwrap_result(address.parse(), "Unable to parse address"),
+    })
+}
+
+#[cfg(all(feature = "ssl", feature = "sqlite"))]
+fn mapper(row: &Row) -> Result<RemotePeer> {
+    let id = unwrap_result(row.get(0), "Unable to read 'id'");
+    let address: String = unwrap_result(row.get(1), "Unable to read 'address'");
+    let public_key: String = unwrap_result(row.get(2), "Unable to read 'public_key'");
+    Ok(RemotePeer {
+        id,
+        addr: unwrap_result(address.parse(), "Unable to parse address"),
         public_key: public_key.as_bytes().to_vec(),
     })
 }
 
-pub(crate) async fn create_or_upgrade(pool: &Pool) {
-    execute(pool, Queries::CreateOrUpgrade, EMPTY).await;
+#[cfg(all(feature = "ssl", feature = "mysql"))]
+fn mapper(row: &Row) -> Result<RemotePeer> {
+    let id = unwrap_option(row.get(0), "Unable to read 'id'");
+    let address: String = unwrap_option(row.get(1), "Unable to read 'address'");
+    let public_key: String = unwrap_option(row.get(2), "Unable to read 'public_key'");
+    Ok(RemotePeer {
+        id,
+        addr: unwrap_result(address.parse(), "Unable to parse address"),
+        public_key: public_key.as_bytes().to_vec(),
+    })
+}
+
+pub(crate) async fn create_or_upgrade(pool: &Pool, database_upgrade_mode: &DatabaseUpgradeMode) {
+    match database_upgrade_mode {
+        DatabaseUpgradeMode::Upgrade => execute(pool, Queries::CreateOrUpgrade, EMPTY).await,
+        DatabaseUpgradeMode::AlwaysNew => {
+            execute(pool, Queries::Drop, EMPTY).await;
+            execute(pool, Queries::CreateOrUpgrade, EMPTY).await
+        }
+    };
 }
 
 pub(crate) async fn select_all(pool: &Pool) -> Vec<RemotePeer> {
@@ -104,7 +134,10 @@ pub(crate) async fn select_by_address(pool: &Pool, address: &SocketAddr) -> Vec<
 
 #[cfg(feature = "sqlite")]
 pub(crate) async fn add(pool: &Pool, address: &SocketAddr, public_key: &Vec<u8>) -> RemotePeer {
-    let pk = String::from_utf8(public_key.clone()).expect("Unable to convert public key to string");
+    let pk = unwrap_result(
+        String::from_utf8(public_key.clone()),
+        "Unable to convert public key to string",
+    );
     let res = prepare(
         pool,
         Queries::Add,
@@ -115,12 +148,18 @@ pub(crate) async fn add(pool: &Pool, address: &SocketAddr, public_key: &Vec<u8>)
         mapper,
     )
     .await;
-    res.get(0).unwrap().clone()
+    unwrap_option(
+        res.first().map(RemotePeer::clone),
+        "Unable to get the remote peer added",
+    )
 }
 
 #[cfg(feature = "mysql")]
 pub(crate) async fn add(pool: &Pool, address: &SocketAddr, public_key: &Vec<u8>) -> RemotePeer {
-    let pk = String::from_utf8(public_key.clone()).expect("Unable to convert public key to string");
+    let pk = unwrap_result(
+        String::from_utf8(public_key.clone()),
+        "Unable to convert public key to string",
+    );
     let res = prepare(
         pool,
         Queries::Add,
@@ -131,7 +170,10 @@ pub(crate) async fn add(pool: &Pool, address: &SocketAddr, public_key: &Vec<u8>)
         mapper,
     )
     .await;
-    res.get(0).unwrap().clone()
+    unwrap_option(
+        res.first().map(RemotePeer::clone),
+        "Unable to get the remote peer added",
+    )
 }
 
 #[cfg(feature = "sqlite")]

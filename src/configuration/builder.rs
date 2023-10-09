@@ -32,6 +32,12 @@ impl ConfigurationBuilder {
         self
     }
 
+    /// Change the database upgrate mode.
+    pub fn upgrade_mod(mut self, mode: DatabaseUpgradeMode) -> Self {
+        self.instance.database_upgrade_mode = mode;
+        self
+    }
+
     /// Configure sqlite database in memory (default) or with a file.
     #[cfg(feature = "sqlite")]
     pub fn database(mut self, mode: SqliteMode) -> Self {

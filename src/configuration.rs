@@ -16,6 +16,18 @@ pub enum SqliteMode {
     File(String),
 }
 
+/// # DatabaseUpgradeMode
+///
+/// Upgrade mode :
+/// - AlwaysNew : DROP and CREATE all tables at each start
+/// - Upgrade (default) : Update all tables
+#[derive(Debug, Default, Clone)]
+pub enum DatabaseUpgradeMode {
+    AlwaysNew,
+    #[default]
+    Upgrade,
+}
+
 /// # Configuration
 ///
 /// Options configurables :
@@ -27,6 +39,7 @@ pub enum SqliteMode {
 pub struct Configuration {
     pub(crate) port: u16,
     pub(crate) share_connections: bool,
+    pub(crate) database_upgrade_mode: DatabaseUpgradeMode,
     #[cfg(feature = "sqlite")]
     pub(crate) database_mode: SqliteMode,
     #[cfg(feature = "mysql")]
@@ -53,6 +66,7 @@ impl Configuration {
         Self {
             port: Default::default(),
             share_connections: Default::default(),
+            database_upgrade_mode: DatabaseUpgradeMode::default(),
             database_mode: Default::default(),
             ssl,
         }
@@ -63,6 +77,7 @@ impl Configuration {
         Self {
             port: Default::default(),
             share_connections: Default::default(),
+            database_upgrade_mode: DatabaseUpgradeMode::default(),
             database_url: Default::default(),
             ssl,
         }
@@ -82,15 +97,16 @@ pub struct SSL {
 #[cfg(feature = "ssl")]
 impl Default for SSL {
     fn default() -> Self {
-        let private_key = openssl::rsa::Rsa::generate(2048)
-            .or_else(|e| {
-                log::error!("Unable to generate SSL keys : {e}");
-                Err("Unable to generate SSL keys")
-            })
-            .unwrap();
-        let public_key = private_key
-            .public_key_to_pem()
-            .expect("Unable to generate default public key");
+        use crate::utils::unwrap::unwrap_result;
+
+        let private_key = unwrap_result(
+            openssl::rsa::Rsa::generate(2048),
+            "Unable to generate SSL keys",
+        );
+        let public_key = unwrap_result(
+            private_key.public_key_to_pem(),
+            "Unable to generate default public key",
+        );
         Self {
             private_key,
             public_key,
@@ -102,15 +118,16 @@ impl Default for SSL {
 impl SSL {
     /// Autogenerate a key from a size.
     pub fn from_size(size: u32) -> Self {
-        let private_key = openssl::rsa::Rsa::generate(size)
-            .or_else(|e| {
-                log::error!("Unable to generate SSL keys : {e}");
-                Err("Unable to generate SSL keys")
-            })
-            .unwrap();
-        let public_key = private_key
-            .public_key_to_pem()
-            .expect("Unable to generate public key from size");
+        use crate::utils::unwrap::unwrap_result;
+
+        let private_key = unwrap_result(
+            openssl::rsa::Rsa::generate(size),
+            "Unable to generate SSL keys",
+        );
+        let public_key = unwrap_result(
+            private_key.public_key_to_pem(),
+            "Unable to generate public key from size",
+        );
         Self {
             private_key,
             public_key,
@@ -119,22 +136,24 @@ impl SSL {
 
     /// Generate a key from a file.
     pub fn from_file(path: String) -> Self {
+        use crate::utils::unwrap::unwrap_result;
         use std::io::Read;
 
-        let mut file =
-            std::fs::File::open(path.clone()).expect(&format!("Unable to open file : {path}"));
-        let metadata = std::fs::metadata(&path).expect("Unable to read metadata");
+        let mut file = unwrap_result(
+            std::fs::File::open(path.clone()),
+            &format!("Unable to open file : {path}"),
+        );
+        let metadata = unwrap_result(std::fs::metadata(&path), "Unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
-        file.read(&mut buffer).expect("Buffer overflow");
-        let private_key = openssl::rsa::Rsa::private_key_from_pem(&buffer)
-            .or_else(|e| {
-                log::error!("Unable to generate SSL keys : {e}");
-                Err("Unable to generate SSL keys")
-            })
-            .unwrap();
-        let public_key = private_key
-            .public_key_to_pem()
-            .expect("Unable to generate public key from file");
+        unwrap_result(file.read(&mut buffer), "Buffer overflow");
+        let private_key = unwrap_result(
+            openssl::rsa::Rsa::private_key_from_pem(&buffer),
+            "Unable to generate SSL keys",
+        );
+        let public_key = unwrap_result(
+            private_key.public_key_to_pem(),
+            "Unable to generate public key from file",
+        );
         Self {
             private_key,
             public_key,

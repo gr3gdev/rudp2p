@@ -1,3 +1,5 @@
+use crate::configuration::DatabaseUpgradeMode;
+
 use super::*;
 use std::net::SocketAddr;
 
@@ -7,6 +9,7 @@ use mysql::{params, Result, Row};
 use rusqlite::{Result, Row};
 
 enum Queries {
+    Drop,
     CreateOrUpgrade,
     SelectAll,
     Add,
@@ -16,6 +19,7 @@ enum Queries {
 impl ToSql for Queries {
     fn to_sql(&self) -> &str {
         match self {
+            Queries::Drop => "DROP TABLE IF EXISTS block_peer",
             Queries::CreateOrUpgrade => {
                 if cfg!(feature = "sqlite") {
                     "CREATE TABLE IF NOT EXISTS block_peer (
@@ -37,13 +41,26 @@ impl ToSql for Queries {
     }
 }
 
+#[cfg(feature = "sqlite")]
 fn mapper(row: &Row) -> Result<SocketAddr> {
-    let address: String = row.get(0).expect("Unable to read 'address'");
-    Ok(address.parse().expect("Unable to parse 'address'"))
+    let address: String = unwrap_result(row.get(0), "Unable to read 'address'");
+    Ok(unwrap_result(address.parse(), "Unable to parse 'address'"))
 }
 
-pub(crate) async fn create_or_upgrade(pool: &Pool) {
-    execute(pool, Queries::CreateOrUpgrade, EMPTY).await;
+#[cfg(feature = "mysql")]
+fn mapper(row: &Row) -> Result<SocketAddr> {
+    let address: String = unwrap_option(row.get(0), "Unable to read 'address'");
+    Ok(unwrap_result(address.parse(), "Unable to parse 'address'"))
+}
+
+pub(crate) async fn create_or_upgrade(pool: &Pool, database_upgrade_mode: &DatabaseUpgradeMode) {
+    match database_upgrade_mode {
+        DatabaseUpgradeMode::Upgrade => execute(pool, Queries::CreateOrUpgrade, EMPTY).await,
+        DatabaseUpgradeMode::AlwaysNew => {
+            execute(pool, Queries::Drop, EMPTY).await;
+            execute(pool, Queries::CreateOrUpgrade, EMPTY).await
+        }
+    };
 }
 
 pub(crate) async fn select_all(pool: &Pool) -> Vec<SocketAddr> {

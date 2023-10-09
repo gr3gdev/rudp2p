@@ -22,6 +22,7 @@ fn configure(port: u16) -> Configuration {
     Configuration::builder()
         .port(port)
         .share_connections(true)
+        .upgrade_mod(rudp2plib::configuration::DatabaseUpgradeMode::AlwaysNew)
         .database(&url)
         .build()
 }
@@ -34,6 +35,7 @@ fn configure(port: u16) -> Configuration {
     Configuration::builder(SSL::default())
         .port(port)
         .share_connections(true)
+        .upgrade_mod(rudp2plib::configuration::DatabaseUpgradeMode::AlwaysNew)
         .database(&url)
         .build()
 }

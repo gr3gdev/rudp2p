@@ -1,4 +1,7 @@
-use crate::{configuration::Configuration, dao, network::*, observer::Observer, thread};
+use crate::{
+    configuration::Configuration, dao, network::*, observer::Observer, thread,
+    utils::unwrap::unwrap_result,
+};
 use std::{
     fmt::Debug,
     net::{IpAddr, SocketAddr, UdpSocket},
@@ -90,7 +93,7 @@ impl Debug for Peer {
 impl Clone for Peer {
     fn clone(&self) -> Self {
         Self {
-            udp_socket: self.udp_socket.try_clone().expect("Unable to clone socket"),
+            udp_socket: unwrap_result(self.udp_socket.try_clone(), "Unable to clone socket"),
             configuration: self.configuration.clone(),
             pool: self.pool.clone(),
         }
@@ -104,21 +107,16 @@ impl Peer {
         O: Observer,
     {
         // Get local IP
-        let addr = "127.0.0.1"
-            .parse::<IpAddr>()
-            .or_else(|e| {
-                log::error!("Unable to initialize IP address : {e}");
-                Err("Unable to initialize IP address")
-            })
-            .unwrap();
+        let addr = unwrap_result(
+            "127.0.0.1".parse::<IpAddr>(),
+            "Unable to initialize IP address",
+        );
 
         // New UDP socket
-        let socket = UdpSocket::bind(SocketAddr::new(addr, configuration.port))
-            .or_else(|e| {
-                log::error!("Unable to bind socket on port : {e}");
-                Err("Unable to bind socket on port")
-            })
-            .unwrap();
+        let socket = unwrap_result(
+            UdpSocket::bind(SocketAddr::new(addr, configuration.port)),
+            "Unable to bind socket on port",
+        );
 
         // Start thread for processing messages
         let instance = thread::start_socket_job(&configuration, &socket, observer).await;
@@ -208,7 +206,10 @@ impl Peer {
 
     /// Get local address of the sockets.
     pub fn addr(&self) -> SocketAddr {
-        let addr = self.udp_socket.local_addr().unwrap();
+        let addr = unwrap_result(
+            self.udp_socket.local_addr(),
+            "Unable to get the local address",
+        );
         log::trace!("Peer::addr() => {addr}");
         addr
     }

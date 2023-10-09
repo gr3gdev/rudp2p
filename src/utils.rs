@@ -1,18 +1,21 @@
+use crate::utils::unwrap::unwrap_result;
 use std::time::SystemTime;
 
 pub(crate) mod decoder;
 pub(crate) mod encoder;
 pub(crate) mod multipart;
+pub(crate) mod unwrap;
 
 pub(crate) fn generate_uid(prefix: &str) -> String {
     let mut uid = String::from(prefix);
     uid.push_str(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_string()
-            .as_str(),
+        unwrap_result(
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH),
+            "Error when generate uid",
+        )
+        .as_nanos()
+        .to_string()
+        .as_str(),
     );
     log::trace!("generate_uid({prefix}) => {uid}");
     uid
