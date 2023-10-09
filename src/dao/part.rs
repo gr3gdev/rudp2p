@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    configuration::DatabaseUpgradeMode,
     network::request::Type,
     utils::{decoder::Decoder, encoder::Encoder},
 };
@@ -50,8 +51,10 @@ impl RequestPart {
     pub(crate) fn parse(data: Vec<u8>, addr: SocketAddr) -> Self {
         let request_type = Type::from_code(data[0]);
         let (uid_size, next_index) = Decoder::get_size(&data, 1);
-        let uid = String::from_utf8(data[next_index..next_index + uid_size].to_vec())
-            .expect("Unable to read the UID");
+        let uid = unwrap_result(
+            String::from_utf8(data[next_index..next_index + uid_size].to_vec()),
+            "Unable to read the UID",
+        );
         let (start, next_index) = Decoder::get_size(&data, next_index + uid_size);
         let (total, next_index) = Decoder::get_size(&data, next_index);
         let (content_size, next_index) = Decoder::get_size(&data, next_index);
@@ -82,6 +85,7 @@ impl PartialOrd for RequestPart {
 }
 
 enum Queries {
+    Drop,
     CreateOrUpgrade,
     SelectByUid,
     Add,
@@ -91,6 +95,7 @@ enum Queries {
 impl ToSql for Queries {
     fn to_sql(&self) -> &str {
         match self {
+            Queries::Drop => "DROP TABLE IF EXISTS request_part",
             Queries::CreateOrUpgrade => {
                 if cfg!(feature = "mysql") {
                     "CREATE TABLE IF NOT EXISTS request_part (
@@ -124,14 +129,15 @@ impl ToSql for Queries {
     }
 }
 
+#[cfg(feature = "sqlite")]
 fn mapper(row: &Row) -> Result<RequestPart> {
-    let uid = row.get(0).expect("Unable to read 'uid'");
-    let request_type = row.get(1).expect("Unable to read 'type'");
-    let start = row.get(2).expect("Unable to read 'start'");
-    let total = row.get(3).expect("Unable to read 'total'");
-    let content_size = row.get(4).expect("Unable to read 'content_size'");
-    let content = row.get(5).expect("Unable to read 'content'");
-    let sender: String = row.get(6).expect("Unable to read 'sender'");
+    let uid = unwrap_result(row.get(0), "Unable to read 'uid'");
+    let request_type = unwrap_result(row.get(1), "Unable to read 'type'");
+    let start = unwrap_result(row.get(2), "Unable to read 'start'");
+    let total = unwrap_result(row.get(3), "Unable to read 'total'");
+    let content_size = unwrap_result(row.get(4), "Unable to read 'content_size'");
+    let content = unwrap_result(row.get(5), "Unable to read 'content'");
+    let sender: String = unwrap_result(row.get(6), "Unable to read 'sender'");
     Ok(RequestPart {
         uid,
         request_type,
@@ -139,12 +145,38 @@ fn mapper(row: &Row) -> Result<RequestPart> {
         total,
         content_size,
         content,
-        sender: sender.parse().unwrap(),
+        sender: unwrap_result(sender.parse(), "Unable to parse address !"),
     })
 }
 
-pub(crate) async fn create_or_upgrade(pool: &Pool) {
-    execute(pool, Queries::CreateOrUpgrade, EMPTY).await;
+#[cfg(feature = "mysql")]
+fn mapper(row: &Row) -> Result<RequestPart> {
+    let uid = unwrap_option(row.get(0), "Unable to read 'uid'");
+    let request_type = unwrap_option(row.get(1), "Unable to read 'type'");
+    let start = unwrap_option(row.get(2), "Unable to read 'start'");
+    let total = unwrap_option(row.get(3), "Unable to read 'total'");
+    let content_size = unwrap_option(row.get(4), "Unable to read 'content_size'");
+    let content = unwrap_option(row.get(5), "Unable to read 'content'");
+    let sender: String = unwrap_option(row.get(6), "Unable to read 'sender'");
+    Ok(RequestPart {
+        uid,
+        request_type,
+        start,
+        total,
+        content_size,
+        content,
+        sender: unwrap_result(sender.parse(), "Unable to parse address !"),
+    })
+}
+
+pub(crate) async fn create_or_upgrade(pool: &Pool, database_upgrade_mode: &DatabaseUpgradeMode) {
+    match database_upgrade_mode {
+        DatabaseUpgradeMode::Upgrade => execute(pool, Queries::CreateOrUpgrade, EMPTY).await,
+        DatabaseUpgradeMode::AlwaysNew => {
+            execute(pool, Queries::Drop, EMPTY).await;
+            execute(pool, Queries::CreateOrUpgrade, EMPTY).await
+        }
+    };
 }
 
 #[cfg(feature = "sqlite")]

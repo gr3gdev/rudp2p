@@ -22,10 +22,10 @@ jobs:
         run: docker-compose -f tests/compose.yml up -d
       - name: Run tests with default features
         run: cargo test
+      - name: Run tests with feature ""ssl"
+        run: cargo test --features="ssl"
       - name: Run tests with feature "mysql"
         run: cargo test --features="mysql" --no-default-features
-      - name: Run tests with features "sqlite", "ssl"
-        run: cargo test --features="sqlite,ssl" --no-default-features
       - name: Run tests with features "mysql", "ssl"
         run: cargo test --features="mysql,ssl" --no-default-features
       - name: Clear tests

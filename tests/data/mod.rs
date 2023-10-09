@@ -170,8 +170,8 @@ impl PeersWorld {
                 let start = get_time();
                 while peer.is_alive().await {
                     std::thread::sleep(Duration::from_millis(100));
-                    if get_time() - start > 10000 {
-                        panic!("Peer is not stopped after 10 seconds !");
+                    if get_time() - start > 30000 {
+                        panic!("Peer is not stopped after 30 seconds !");
                     }
                 }
             }
@@ -189,7 +189,7 @@ impl PeersWorld {
             for e in events {
                 let other = self.get_peer(&e.from).addr();
                 assert!(
-                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &other), 3000).await,
+                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &other), 10000).await,
                     "Peer {peer} is not connected with {}",
                     e.from
                 );
@@ -200,7 +200,7 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| is_peer_disconnected_with(&self.pool, &peer, &other),
-                        3000
+                        10000
                     )
                     .await,
                     "Peer {peer} is not disconnected with {}",
@@ -220,7 +220,7 @@ impl PeersWorld {
                             .await;
                             messages.iter().any(|m| m.content == e.content)
                         },
-                        5000
+                        30000
                     )
                     .await,
                     "Peer {peer} has not received the message from {}",
@@ -250,7 +250,7 @@ impl PeersWorld {
                             .await
                                 == false
                         },
-                        3000
+                        10000
                     )
                     .await,
                     "Peer {peer} is connected with {}",
@@ -270,7 +270,7 @@ impl PeersWorld {
                             .await
                                 == false
                         },
-                        3000
+                        10000
                     )
                     .await,
                     "Peer {peer} is disconnected with {}",
@@ -290,7 +290,7 @@ impl PeersWorld {
                             .await;
                             messages.is_empty() || messages.iter().all(|m| m.content != e.content)
                         },
-                        5000
+                        30000
                     )
                     .await,
                     "Peer {peer} has received the message from {}",

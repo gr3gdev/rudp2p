@@ -7,7 +7,7 @@ use crate::{
         connection::ConnectionService, disconnection::DisconnectionService,
         message::MessageService, share::ShareService,
     },
-    utils::multipart::Multipart,
+    utils::{multipart::Multipart, unwrap::unwrap_result},
 };
 use futures::executor::block_on;
 use std::{
@@ -41,7 +41,7 @@ impl Clone for PeerInstance {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
-            socket: self.socket.try_clone().unwrap(),
+            socket: unwrap_result(self.socket.try_clone(), "Unable to clone socket"),
             configuration: self.configuration.clone(),
         }
     }
@@ -54,7 +54,7 @@ impl PeerInstance {
 
         let instance = Self {
             pool: Arc::new(pool),
-            socket: socket.try_clone().unwrap(),
+            socket: unwrap_result(socket.try_clone(), "Unable to clone socket"),
             configuration: configuration.clone(),
         };
         log::trace!(
@@ -70,10 +70,11 @@ impl PeerInstance {
 /// Send a message to stop the thread
 pub(crate) fn stop_job(socket: &UdpSocket) -> () {
     log::trace!("stop_job({:?})", socket);
-    let addr = socket.local_addr().unwrap();
-    socket
-        .send_to(&END.to_vec(), addr)
-        .expect("Unable to send end signal");
+    let addr = unwrap_result(socket.local_addr(), "Unable to get the local address");
+    unwrap_result(
+        socket.send_to(&END.to_vec(), addr),
+        "Unable to send end signal",
+    );
 }
 
 /// Start a thread

@@ -1,5 +1,9 @@
 use self::{events::*, request::Type};
-use crate::{configuration::Configuration, peer::RemotePeer, utils::multipart::Multipart};
+use crate::{
+    configuration::Configuration,
+    peer::RemotePeer,
+    utils::{multipart::Multipart, unwrap::unwrap_result},
+};
 use log::error;
 use std::{
     fmt::Debug,
@@ -139,10 +143,10 @@ impl Request {
         let mut current = Vec::new();
         for b in self.content.clone() {
             if b == ',' as u8 {
-                let addr = String::from_utf8(current)
-                    .expect("Unable to read address")
-                    .parse()
-                    .expect("Unable to parse address");
+                let addr = unwrap_result(
+                    unwrap_result(String::from_utf8(current), "Unable to read address").parse(),
+                    "Unable to parse address",
+                );
                 res.push(addr);
                 current = Vec::new();
             } else {

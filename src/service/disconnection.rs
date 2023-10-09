@@ -5,9 +5,10 @@ use std::{
 
 use crate::{
     dao::remote::{self},
-    network::{Request, Response, send},
+    network::{send, Request, Response},
     observer::Observer,
     thread::PeerInstance,
+    utils::unwrap::{unwrap_option, unwrap_result},
 };
 
 pub(crate) struct DisconnectionService;
@@ -25,7 +26,7 @@ impl DisconnectionService {
         let res = if exist.is_empty() {
             (None, vec![])
         } else {
-            let remote = exist.get(0).unwrap();
+            let remote = unwrap_option(exist.first(), "Unable to get the first remote peer");
             if remote::remove(&instance.pool, &remote).await < 1 {
                 log::error!("[DAO] Unable to remove remote peer");
                 (None, vec![])
@@ -34,7 +35,9 @@ impl DisconnectionService {
                 let req = Request::new_disconnection();
                 send(&instance.socket, &req, &remote.addr);
                 (
-                    observer.lock().unwrap().on_disconnected(remote).await,
+                    unwrap_result(observer.lock(), "Unable to send on_disconnected event")
+                        .on_disconnected(remote)
+                        .await,
                     vec![],
                 )
             }

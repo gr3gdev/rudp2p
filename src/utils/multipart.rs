@@ -4,7 +4,7 @@ use crate::{
     configuration::Configuration,
     dao::part::RequestPart,
     network::{request::Type, *},
-    utils::generate_uid,
+    utils::{generate_uid, unwrap::unwrap_option},
 };
 
 #[cfg(not(feature = "ssl"))]
@@ -14,9 +14,13 @@ fn get_public_key_size(_public_key: &Vec<u8>) -> usize {
 
 #[cfg(feature = "ssl")]
 fn get_public_key_size(public_key: &Vec<u8>) -> usize {
-    openssl::rsa::Rsa::public_key_from_pem(public_key)
-        .unwrap()
-        .size() as usize
+    use super::unwrap::unwrap_result;
+
+    unwrap_result(
+        openssl::rsa::Rsa::public_key_from_pem(public_key),
+        "Unable to get the public key size !",
+    )
+    .size() as usize
         / 2
 }
 
@@ -73,7 +77,7 @@ impl Multipart {
         parts: &Vec<RequestPart>,
         configuration: &Configuration,
     ) -> (Request, SocketAddr) {
-        let first = parts.get(0).unwrap();
+        let first = unwrap_option(parts.first(), "Unable to get the first request part");
         let request_type = first.request_type.clone();
         let addr = first.sender;
         let data = parts

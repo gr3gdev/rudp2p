@@ -29,6 +29,8 @@ impl Type {
 
 #[cfg(feature = "sqlite")]
 mod sqlite {
+    use crate::utils::unwrap::unwrap_result;
+
     use super::Type;
     use rusqlite::{types::FromSql, ToSql};
 
@@ -36,9 +38,10 @@ mod sqlite {
         fn column_result(
             value: rusqlite::types::ValueRef<'_>,
         ) -> rusqlite::types::FromSqlResult<Self> {
-            rusqlite::types::FromSqlResult::Ok(Type::from_code(
-                value.as_i64().expect("Unable to read Type value") as u8,
-            ))
+            rusqlite::types::FromSqlResult::Ok(Type::from_code(unwrap_result(
+                value.as_i64(),
+                "Unable to read Type value",
+            ) as u8))
         }
     }
 

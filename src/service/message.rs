@@ -8,6 +8,7 @@ use crate::{
     network::{Request, Response},
     observer::Observer,
     thread::PeerInstance,
+    utils::unwrap::{unwrap_option, unwrap_result},
 };
 
 pub(crate) struct MessageService;
@@ -25,9 +26,11 @@ impl MessageService {
     {
         let remotes = remote::select_by_address(&instance.pool, remote_addr).await;
         let res = if !remotes.is_empty() {
-            let remote = remotes.get(0).unwrap();
+            let remote = unwrap_option(remotes.first(), "Unable to get the first remote peer");
             let message = request.to_message_event(remote);
-            let res = observer.lock().unwrap().on_message(&message).await;
+            let res = unwrap_result(observer.lock(), "Unable to send on_message event")
+                .on_message(&message)
+                .await;
             (res, vec![])
         } else {
             (None, vec![])
@@ -53,9 +56,11 @@ impl MessageService {
     {
         let remotes = remote::select_by_address(&instance.pool, remote_addr).await;
         let res = if !remotes.is_empty() {
-            let remote = remotes.get(0).unwrap();
+            let remote = unwrap_option(remotes.first(), "Unable to get the first remote peer");
             let message = request.to_message_event(remote);
-            let res = observer.lock().unwrap().on_message(&message).await;
+            let res = unwrap_result(observer.lock(), "Unable to send on_message event")
+                .on_message(&message)
+                .await;
             (res, remote.public_key.clone())
         } else {
             (None, vec![])
