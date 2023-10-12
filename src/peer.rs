@@ -1,93 +1,22 @@
 use crate::{
-    configuration::Configuration, dao, network::*, observer::Observer, thread,
+    configuration::Configuration, dao::PeerDao, network::*, observer::Observer, thread,
     utils::unwrap::unwrap_result,
 };
 use std::{
     fmt::Debug,
     net::{IpAddr, SocketAddr, UdpSocket},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
-/// # Peer
-///
-#[cfg_attr(
-    all(feature = "sqlite", not(feature = "ssl")),
-    doc = r##"
-Example of a connection with the sqlite feature
-```
-use async_trait::async_trait;
-use rudp2plib::{configuration::*, network::{*, events::Message}, observer::*, peer::*};
-
-struct MyObserver {
-    name: String,
-}
-
-#[async_trait]
-impl Observer for MyObserver {
-    async fn on_connected(&mut self, remote: &RemotePeer) -> Option<Response> {
-        let mut text = String::from("Hello I am ");
-        text.push_str(&self.name);
-        Some(Response::text(&text))
-    }
-
-    async fn on_disconnected(&mut self, remote: &RemotePeer) -> Option<Response> {
-        Some(Response::text("Goodbye !"))
-    }
-
-    async fn on_message(&mut self, m: &Message) -> Option<Response> {
-        println!("{} : {}", self.name, String::from_utf8(m.content.clone()).unwrap());
-        None
-    }
-}
-
-async fn example() {
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
-
-    let observer1 = MyObserver{
-        name: String::from("Peer1"),
-    };
-    let peer1 = Peer::new(
-        Configuration::builder().port(9001).build(),
-        observer1,
-    ).await;
-
-    let observer2 = MyObserver{
-        name: String::from("Peer2"),
-    };
-    let peer2 = Peer::new(
-        Configuration::builder().port(9002).build(),
-        observer2,
-    ).await;
-
-    peer1.connect_to(&peer2.addr());
-
-    peer1.close();
-    peer2.close();
-}
-
-fn main() {
-    futures::executor::block_on(example());
-}
-```
-"##
-)]
+#[derive(Debug)]
+#[doc = include_str!("../README.md")]
 pub struct Peer {
     /// UDP socket.
     udp_socket: UdpSocket,
     /// The configuration.
     configuration: Configuration,
-    /// Database pool.
-    pool: Arc<dao::Pool>,
-}
-
-impl Debug for Peer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Peer")
-            .field("udp_socket", &self.udp_socket)
-            .field("configuration", &self.configuration)
-            .field("pool", &self.pool)
-            .finish()
-    }
+    /// Custom DAO.
+    dao: Arc<Mutex<dyn PeerDao>>,
 }
 
 impl Clone for Peer {
@@ -95,16 +24,17 @@ impl Clone for Peer {
         Self {
             udp_socket: unwrap_result(self.udp_socket.try_clone(), "Unable to clone socket"),
             configuration: self.configuration.clone(),
-            pool: self.pool.clone(),
+            dao: Arc::clone(&self.dao),
         }
     }
 }
 
 impl Peer {
     /// Create a new Peer.
-    pub async fn new<O>(configuration: Configuration, observer: O) -> Peer
+    pub async fn new<O, D>(configuration: Configuration, dao: D, observer: O) -> Peer
     where
         O: Observer,
+        D: PeerDao,
     {
         // Get local IP
         let addr = unwrap_result(
@@ -118,14 +48,16 @@ impl Peer {
             "Unable to bind socket on port",
         );
 
+        let dao = Arc::new(Mutex::new(dao));
+
         // Start thread for processing messages
-        let instance = thread::start_socket_job(&configuration, &socket, observer).await;
+        let instance = thread::start_socket_job(&configuration, &socket, &dao, observer).await;
 
         // Return Peer
         let peer = Peer {
             udp_socket: socket,
             configuration: instance.configuration,
-            pool: instance.pool,
+            dao,
         };
         log::trace!("Peer::new({:?}, observer) => {:?}", configuration, peer);
         peer
@@ -133,7 +65,7 @@ impl Peer {
 
     /// Return true if the Peer is alive.
     pub async fn is_alive(&self) -> bool {
-        let alive = dao::thread::status(&self.pool).await;
+        let alive = self.dao.lock().unwrap().find_status().await;
         log::trace!("Peer::is_alive() => {alive}");
         alive
     }
@@ -176,7 +108,12 @@ impl Peer {
     pub async fn send_to(&self, request: Request, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::send_to({:?}, {remote_address})", request);
         let request = Request::new_message(&request.content);
-        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
+        let remotes = self
+            .dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(&remote_address)
+            .await;
         self.send(request, remotes);
     }
 
@@ -184,7 +121,7 @@ impl Peer {
     pub async fn send_to_all(&self, request: &Request) -> () {
         log::trace!("Peer::send_to_all({:?})", request);
         let request = Request::new_message(&request.content);
-        let remote_peers = dao::remote::select_all(&self.pool).await;
+        let remote_peers = self.dao.lock().unwrap().find_all_remotes().await;
         self.send(request, remote_peers);
     }
 
@@ -192,7 +129,12 @@ impl Peer {
     pub async fn disconnect_to(&self, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::disconnect_to({remote_address})");
         let request = Request::new_disconnection();
-        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
+        let remotes = self
+            .dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(&remote_address)
+            .await;
         self.send(request, remotes);
     }
 
@@ -200,7 +142,7 @@ impl Peer {
     pub async fn disconnect_to_all(&self) -> () {
         log::trace!("Peer::disconnect_to_all()");
         let request = Request::new_disconnection();
-        let remote_peers = dao::remote::select_all(&self.pool).await;
+        let remote_peers = self.dao.lock().unwrap().find_all_remotes().await;
         self.send(request, remote_peers);
     }
 
@@ -217,10 +159,15 @@ impl Peer {
     /// Block a remote peer.
     pub async fn block(&self, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::block({remote_address})");
-        let remotes = dao::remote::select_by_address(&self.pool, &remote_address).await;
+        let remotes = self
+            .dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(&remote_address)
+            .await;
         for remote in remotes {
             self.disconnect_to(remote_address).await;
-            if dao::block::add(&self.pool, &remote.addr).await < 1 {
+            if self.dao.lock().unwrap().block(&remote.addr).await < 1 {
                 log::error!("[DAO] Unable to block {:?}", remote);
             }
         }
@@ -229,9 +176,9 @@ impl Peer {
     /// Unblock a remote peer.
     pub async fn unblock(&self, remote_address: &SocketAddr) -> () {
         log::trace!("Peer::unblock({remote_address})");
-        let blocked_addresses = dao::block::select_all(&self.pool).await;
+        let blocked_addresses = self.dao.lock().unwrap().find_all_block().await;
         if blocked_addresses.contains(remote_address) {
-            if dao::block::remove(&self.pool, &remote_address).await < 1 {
+            if self.dao.lock().unwrap().unblock(&remote_address).await < 1 {
                 log::error!("[DAO] Unable to unblock {}", remote_address);
             } else {
                 self.connect_to(remote_address);
@@ -267,7 +214,6 @@ impl Debug for RemotePeer {
 }
 
 #[cfg(test)]
-#[cfg(feature = "sqlite")]
 mod tests {
     use super::{Peer, RemotePeer};
     use crate::{
@@ -287,25 +233,27 @@ mod tests {
 
     #[cfg(not(feature = "ssl"))]
     fn prepare(port: u16) -> (Peer, Test) {
+        use crate::dao::InMemoryDao;
+
         let conf = Configuration::builder()
             .port(port)
             .share_connections(true)
             .build();
         let test = Test::default();
-        let peer = block_on(Peer::new(conf, test.clone()));
+        let peer = block_on(Peer::new(conf, InMemoryDao::default(), test.clone()));
         (peer, test)
     }
 
     #[cfg(feature = "ssl")]
     fn prepare(port: u16) -> (Peer, Test) {
-        use crate::configuration::SSL;
+        use crate::{configuration::SSL, dao::InMemoryDao};
 
         let conf = Configuration::builder(SSL::from_size(4096))
             .port(port)
             .share_connections(true)
             .build();
         let test = Test::default();
-        let peer = block_on(Peer::new(conf, test.clone()));
+        let peer = block_on(Peer::new(conf, InMemoryDao::default(), test.clone()));
         (peer, test)
     }
 

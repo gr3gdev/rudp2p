@@ -4,6 +4,7 @@ use futures::{future::LocalBoxFuture, FutureExt};
 use log::debug;
 use r2d2_sqlite::SqliteConnectionManager;
 use rudp2plib::{
+    dao::InMemoryDao,
     network::{events::*, Response},
     observer::Observer,
     peer::*,
@@ -153,7 +154,7 @@ impl PeersWorld {
                 name: peer_data.name.clone(),
                 pool: self.pool.clone(),
             };
-            let peer = Peer::new(conf, test_observer).await;
+            let peer = Peer::new(conf, InMemoryDao::default(), test_observer).await;
             self.peers.insert(peer_data.name, peer);
         }
     }

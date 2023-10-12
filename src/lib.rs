@@ -1,5 +1,5 @@
 pub mod configuration;
-pub(crate) mod dao;
+pub mod dao;
 pub mod network;
 pub mod observer;
 pub mod peer;

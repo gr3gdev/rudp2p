@@ -1,5 +1,5 @@
 use crate::{
-    dao::remote,
+    dao::PeerDao,
     network::{send, Request, Response},
     observer::Observer,
     peer::RemotePeer,
@@ -33,18 +33,24 @@ fn share_connection(
 }
 
 impl ConnectionService {
-    pub(crate) async fn execute<O>(
+    #[cfg(not(feature = "ssl"))]
+    pub(crate) async fn execute<O, D>(
         instance: &PeerInstance,
         request: &Request,
         remote_addr: &SocketAddr,
         observer: Arc<Mutex<O>>,
+        dao: Arc<Mutex<D>>,
     ) -> (Option<Response>, Vec<u8>)
     where
         O: Observer,
+        D: PeerDao,
     {
-        let connected_peers = remote::select_all(&instance.pool).await;
-        let public_key = request.parse_public_key();
-        let exist = remote::select_by_address(&instance.pool, remote_addr).await;
+        let connected_peers = dao.lock().unwrap().find_all_remotes().await;
+        let exist = dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(remote_addr)
+            .await;
         let res = if exist.is_empty() {
             // Share connection ?
             share_connection(
@@ -54,7 +60,61 @@ impl ConnectionService {
                 instance.configuration.share_connections,
             );
             // Cache the connection with address and public key
-            let remote = remote::add(&instance.pool, &remote_addr, &public_key).await;
+            let remote = dao.lock().unwrap().add_remote(&remote_addr).await;
+            // Send connection to remote too
+            let req = Request::new_connection(&instance.configuration);
+            send(&instance.socket, &req, &remote_addr);
+            (
+                unwrap_result(observer.lock(), "Unable to send on_connected event")
+                    .on_connected(&remote)
+                    .await,
+                vec![],
+            )
+        } else {
+            (None, vec![])
+        };
+        log::trace!(
+            "ConnectionService::execute({:?}, {:?}, {remote_addr}, observer) => {:?}",
+            instance,
+            request,
+            res
+        );
+        res
+    }
+
+    #[cfg(feature = "ssl")]
+    pub(crate) async fn execute<O, D>(
+        instance: &PeerInstance,
+        request: &Request,
+        remote_addr: &SocketAddr,
+        observer: Arc<Mutex<O>>,
+        dao: Arc<Mutex<D>>,
+    ) -> (Option<Response>, Vec<u8>)
+    where
+        O: Observer,
+        D: PeerDao,
+    {
+        let connected_peers = dao.lock().unwrap().find_all_remotes().await;
+        let public_key = request.parse_public_key();
+        let exist = dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(remote_addr)
+            .await;
+        let res = if exist.is_empty() {
+            // Share connection ?
+            share_connection(
+                &instance.socket,
+                &remote_addr,
+                &connected_peers,
+                instance.configuration.share_connections,
+            );
+            // Cache the connection with address and public key
+            let remote = dao
+                .lock()
+                .unwrap()
+                .add_remote(&remote_addr, &public_key)
+                .await;
             // Send connection to remote too
             let req = Request::new_connection(&instance.configuration);
             send(&instance.socket, &req, &remote_addr);

@@ -21,7 +21,6 @@ fn configure(port: u16) -> Configuration {
     Configuration::builder()
         .port(port)
         .share_connections(true)
-        .database(rudp2plib::configuration::SqliteMode::Memory)
         .build()
 }
 
@@ -32,15 +31,14 @@ fn configure(port: u16) -> Configuration {
     Configuration::builder(SSL::default())
         .port(port)
         .share_connections(true)
-        .database(rudp2plib::configuration::SqliteMode::Memory)
         .build()
 }
 
 fn main() {
     let report = if cfg!(feature = "ssl") {
-        "reports/sqlite_ssl.md"
+        "reports/ssl.md"
     } else {
-        "reports/sqlite.md"
+        "reports/default.md"
     };
     let output = fs::File::create(report).unwrap();
     let writer = Markdown::new(output);

@@ -1,54 +1,39 @@
 use self::builder::ConfigurationBuilder;
+use std::fmt::Debug;
 
 mod builder;
-
-/// # SqliteMode
-///
-/// - Memory : the database is in memory, all data are losed if the Peer is closed.
-/// - File : specify a path, all data are conserved if the Peer is closed.
-///
-/// NB: The Memory is more performant.
-#[cfg(feature = "sqlite")]
-#[derive(Debug, Default, Clone)]
-pub enum SqliteMode {
-    #[default]
-    Memory,
-    File(String),
-}
-
-/// # DatabaseUpgradeMode
-///
-/// Upgrade mode :
-/// - AlwaysNew : DROP and CREATE all tables at each start
-/// - Upgrade (default) : Update all tables
-#[derive(Debug, Default, Clone)]
-pub enum DatabaseUpgradeMode {
-    AlwaysNew,
-    #[default]
-    Upgrade,
-}
 
 /// # Configuration
 ///
 /// Options configurables :
 /// - port
 /// - share connections
-/// - database mode (if feature sqlite)
-/// - database url (if feature mysql)
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Configuration {
     pub(crate) port: u16,
     pub(crate) share_connections: bool,
-    pub(crate) database_upgrade_mode: DatabaseUpgradeMode,
-    #[cfg(feature = "sqlite")]
-    pub(crate) database_mode: SqliteMode,
-    #[cfg(feature = "mysql")]
-    pub(crate) database_url: Option<String>,
     #[cfg(feature = "ssl")]
     pub(crate) ssl: SSL,
 }
 
 impl Configuration {
+    #[cfg(not(feature = "ssl"))]
+    pub(crate) fn new() -> Self {
+        Self {
+            port: 9000,
+            share_connections: false,
+        }
+    }
+
+    #[cfg(feature = "ssl")]
+    pub(crate) fn new(ssl: SSL) -> Self {
+        Self {
+            port: 9000,
+            share_connections: false,
+            ssl,
+        }
+    }
+
     /// Init the configuration builder.
     #[cfg(not(feature = "ssl"))]
     pub fn builder() -> ConfigurationBuilder {
@@ -59,28 +44,6 @@ impl Configuration {
     #[cfg(feature = "ssl")]
     pub fn builder(ssl: SSL) -> ConfigurationBuilder {
         ConfigurationBuilder::new(ssl)
-    }
-
-    #[cfg(all(feature = "sqlite", feature = "ssl"))]
-    fn default_with_ssl(ssl: SSL) -> Self {
-        Self {
-            port: Default::default(),
-            share_connections: Default::default(),
-            database_upgrade_mode: DatabaseUpgradeMode::default(),
-            database_mode: Default::default(),
-            ssl,
-        }
-    }
-
-    #[cfg(all(feature = "mysql", feature = "ssl"))]
-    fn default_with_ssl(ssl: SSL) -> Self {
-        Self {
-            port: Default::default(),
-            share_connections: Default::default(),
-            database_upgrade_mode: DatabaseUpgradeMode::default(),
-            database_url: Default::default(),
-            ssl,
-        }
     }
 }
 

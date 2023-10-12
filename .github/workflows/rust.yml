@@ -14,28 +14,31 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: .
+
     steps:
       - uses: actions/checkout@v3
       - name: Build
         run: cargo build --verbose
-      - name: Prepare tests
-        run: docker-compose -f tests/compose.yml up -d
+
+      - name: Compatibility WASM
+        working-directory: ./wasm
+        run: cargo build --lib --target wasm32-unknown-unknown
+
       - name: Run tests with default features
         run: cargo test
+
       - name: Run tests with feature ""ssl"
         run: cargo test --features="ssl"
-      - name: Run tests with feature "mysql"
-        run: cargo test --features="mysql" --no-default-features
-      - name: Run tests with features "mysql", "ssl"
-        run: cargo test --features="mysql,ssl" --no-default-features
-      - name: Clear tests
-        run: docker-compose -f tests/compose.yml down
+        
       - name: Push reports
         if: github.ref_name != 'master'
         run: |
           git config --local user.name "GitHub Action [bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config advice.addIgnoredFile false
-          git add -f reports/mysql.md reports/sqlite.md reports/mysql_ssl.md reports/sqlite_ssl.md
+          git add -f reports/default.md reports/ssl.md
           git commit -m "Add cucumber reports"
           git push -f origin HEAD:refs/heads/${{ github.head_ref }}
