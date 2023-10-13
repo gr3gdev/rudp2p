@@ -72,7 +72,6 @@ impl RemotePeerDao {
     fn add(&self, address: &SocketAddr, public_key: &Vec<u8>) -> RemotePeer {
         let mut remotes = self.remotes.lock().unwrap();
         let remote = RemotePeer {
-            id: remotes.len() as i64,
             addr: address.clone(),
             public_key: public_key.clone(),
         };
@@ -83,7 +82,6 @@ impl RemotePeerDao {
     fn add(&self, address: &SocketAddr) -> RemotePeer {
         let mut remotes = self.remotes.lock().unwrap();
         let remote = RemotePeer {
-            id: remotes.len() as i64,
             addr: address.clone(),
         };
         remotes.push(remote.clone());

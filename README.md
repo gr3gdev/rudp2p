@@ -101,5 +101,5 @@ fn main() {
 ```
 
 ## Features
-- [default](./reports/default.md)
-- [ssl](./reports/ssl.md)
+- [default](https://github.com/gr3gdev/rudp2p/reports/default.md)
+- [ssl](https://github.com/gr3gdev/rudp2p/reports/ssl.md)

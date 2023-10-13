@@ -3,7 +3,7 @@ use std::{cmp::Ordering, fmt::Debug, net::SocketAddr};
 use crate::utils::{decoder::Decoder, encoder::Encoder, unwrap::unwrap_result};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Type {
+pub enum Type {
     Connection,
     Disconnection,
     Message,
@@ -11,7 +11,7 @@ pub(crate) enum Type {
 }
 
 impl Type {
-    pub(crate) fn from_code(code: u8) -> Self {
+    pub fn from_code(code: u8) -> Self {
         match code {
             0 => Self::Connection,
             1 => Self::Disconnection,
@@ -21,7 +21,7 @@ impl Type {
         }
     }
 
-    pub(crate) fn to_code(&self) -> u8 {
+    pub fn to_code(&self) -> u8 {
         match self {
             Type::Connection => 0,
             Type::Disconnection => 1,
@@ -33,13 +33,13 @@ impl Type {
 
 #[derive(Clone, Eq, PartialEq, Ord)]
 pub struct RequestPart {
-    pub(crate) uid: String,
-    pub(crate) request_type: Type,
-    pub(crate) start: usize,
-    pub(crate) total: usize,
-    pub(crate) content_size: usize,
-    pub(crate) content: Vec<u8>,
-    pub(crate) sender: SocketAddr,
+    pub uid: String,
+    pub request_type: Type,
+    pub start: usize,
+    pub total: usize,
+    pub content_size: usize,
+    pub content: Vec<u8>,
+    pub sender: SocketAddr,
 }
 
 impl Debug for RequestPart {

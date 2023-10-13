@@ -44,6 +44,7 @@ fn main() {
     let writer = Markdown::new(output);
     futures::executor::block_on(
         PeersWorld::cucumber()
+            .fail_fast()
             .max_concurrent_scenarios(5)
             .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())
             .with_writer(writer)

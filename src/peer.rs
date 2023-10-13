@@ -198,7 +198,6 @@ impl Peer {
 /// A another Peer which is connected with the local Peer.
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct RemotePeer {
-    pub(crate) id: i64,
     /// The remote address.
     pub addr: SocketAddr,
     #[cfg(feature = "ssl")]
@@ -210,6 +209,21 @@ impl Debug for RemotePeer {
         f.debug_struct("RemotePeer")
             .field("addr", &self.addr)
             .finish()
+    }
+}
+
+impl RemotePeer {
+    #[cfg(not(feature = "ssl"))]
+    pub fn new(addr: &SocketAddr) -> Self {
+        Self { addr: addr.clone() }
+    }
+
+    #[cfg(feature = "ssl")]
+    pub fn new(addr: &SocketAddr, public_key: &Vec<u8>) -> Self {
+        Self {
+            addr: addr.clone(),
+            public_key: public_key.clone(),
+        }
     }
 }
 
