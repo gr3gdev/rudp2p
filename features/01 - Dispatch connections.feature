@@ -2,11 +2,11 @@ Feature: Dispatch connections
 
   Scenario: Reception of connection and disconnection events
     Given the following peers are started
-      | Name | Port |
-      | P0   | 9000 |
-      | P1   | 9001 |
-      | P2   | 9002 |
-      | P3   | 9003 |
+      | Name | Port | Database                                 |
+      | P0   | 9000 | InMemory                                 |
+      | P1   | 9001 | InMemory                                 |
+      | P2   | 9002 | Sqlite                                   |
+      | P3   | 9003 | mysql://cucumber:test@localhost:33063/P3 |
     When the peer "P1" connects to "P0"
     Then the peer "P0" receives
       | Event     | From |

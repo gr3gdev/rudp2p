@@ -157,11 +157,6 @@ impl Request {
         res
     }
 
-    #[cfg(not(feature = "ssl"))]
-    pub(crate) fn parse_public_key(&self) -> Vec<u8> {
-        vec![]
-    }
-
     #[cfg(feature = "ssl")]
     pub(crate) fn parse_public_key(&self) -> Vec<u8> {
         use crate::utils::decoder::Decoder;

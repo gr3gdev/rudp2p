@@ -12,8 +12,10 @@ use tracing_subscriber::{
 
 pub(crate) mod dao;
 pub(crate) mod data;
+pub(crate) mod mysql;
 pub(crate) mod report;
 pub(crate) mod steps;
+pub(crate) mod sqlite;
 pub(crate) mod utils;
 
 #[cfg(not(feature = "ssl"))]
@@ -21,7 +23,6 @@ fn configure(port: u16) -> Configuration {
     Configuration::builder()
         .port(port)
         .share_connections(true)
-        .database(rudp2plib::configuration::SqliteMode::Memory)
         .build()
 }
 
@@ -32,20 +33,20 @@ fn configure(port: u16) -> Configuration {
     Configuration::builder(SSL::default())
         .port(port)
         .share_connections(true)
-        .database(rudp2plib::configuration::SqliteMode::Memory)
         .build()
 }
 
 fn main() {
     let report = if cfg!(feature = "ssl") {
-        "reports/sqlite_ssl.md"
+        "reports/ssl.md"
     } else {
-        "reports/sqlite.md"
+        "reports/default.md"
     };
     let output = fs::File::create(report).unwrap();
     let writer = Markdown::new(output);
     futures::executor::block_on(
         PeersWorld::cucumber()
+            .fail_fast()
             .max_concurrent_scenarios(5)
             .after(|_feature, _rule, _scenario, _ev, world| world.unwrap().close())
             .with_writer(writer)

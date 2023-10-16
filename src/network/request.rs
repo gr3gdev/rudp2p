@@ -1,5 +1,9 @@
+use std::{cmp::Ordering, fmt::Debug, net::SocketAddr};
+
+use crate::utils::{decoder::Decoder, encoder::Encoder, unwrap::unwrap_result};
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Type {
+pub enum Type {
     Connection,
     Disconnection,
     Message,
@@ -7,7 +11,7 @@ pub(crate) enum Type {
 }
 
 impl Type {
-    pub(crate) fn from_code(code: u8) -> Self {
+    pub fn from_code(code: u8) -> Self {
         match code {
             0 => Self::Connection,
             1 => Self::Disconnection,
@@ -17,7 +21,7 @@ impl Type {
         }
     }
 
-    pub(crate) fn to_code(&self) -> u8 {
+    pub fn to_code(&self) -> u8 {
         match self {
             Type::Connection => 0,
             Type::Disconnection => 1,
@@ -27,64 +31,75 @@ impl Type {
     }
 }
 
-#[cfg(feature = "sqlite")]
-mod sqlite {
-    use crate::utils::unwrap::unwrap_result;
+#[derive(Clone, Eq, PartialEq, Ord)]
+pub struct RequestPart {
+    pub uid: String,
+    pub request_type: Type,
+    pub start: usize,
+    pub total: usize,
+    pub content_size: usize,
+    pub content: Vec<u8>,
+    pub sender: SocketAddr,
+}
 
-    use super::Type;
-    use rusqlite::{types::FromSql, ToSql};
-
-    impl FromSql for Type {
-        fn column_result(
-            value: rusqlite::types::ValueRef<'_>,
-        ) -> rusqlite::types::FromSqlResult<Self> {
-            rusqlite::types::FromSqlResult::Ok(Type::from_code(unwrap_result(
-                value.as_i64(),
-                "Unable to read Type value",
-            ) as u8))
-        }
-    }
-
-    impl ToSql for Type {
-        fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-            Ok(rusqlite::types::ToSqlOutput::from(self.to_code()))
-        }
+impl Debug for RequestPart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestPart")
+            .field("uid", &self.uid)
+            .field("request_type", &self.request_type)
+            .field("start", &self.start)
+            .field("total", &self.total)
+            .field("content_size", &self.content_size)
+            .field("sender", &self.sender)
+            .finish()
     }
 }
 
-#[cfg(feature = "mysql")]
-mod sqlite {
-    use super::Type;
-    use mysql::{prelude::FromValue, FromValueError};
-
-    pub struct ParseType {
-        code: i64,
+impl RequestPart {
+    pub(crate) fn to_data(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.push(self.request_type.to_code());
+        let data = Encoder::add_with_size(&data, &self.uid.as_bytes().to_vec());
+        let data = Encoder::add_size(&data, self.start);
+        let data = Encoder::add_size(&data, self.total);
+        let mut data = Encoder::add_size(&data, self.content_size);
+        data.append(&mut self.content.clone());
+        log::trace!("RequestPart::to_data() => {}", data.len());
+        data
     }
 
-    impl TryFrom<mysql::Value> for ParseType {
-        type Error = FromValueError;
-
-        fn try_from(value: mysql::Value) -> Result<Self, Self::Error> {
-            match value {
-                mysql::Value::Int(v) => Ok(Self { code: v }),
-                _ => Err(FromValueError(value)),
-            }
-        }
+    pub(crate) fn parse(data: Vec<u8>, addr: SocketAddr) -> Self {
+        let request_type = Type::from_code(data[0]);
+        let (uid_size, next_index) = Decoder::get_size(&data, 1);
+        let uid = unwrap_result(
+            String::from_utf8(data[next_index..next_index + uid_size].to_vec()),
+            "Unable to read the UID",
+        );
+        let (start, next_index) = Decoder::get_size(&data, next_index + uid_size);
+        let (total, next_index) = Decoder::get_size(&data, next_index);
+        let (content_size, next_index) = Decoder::get_size(&data, next_index);
+        let res = Self {
+            uid,
+            request_type,
+            start,
+            total,
+            content_size,
+            content: data[next_index..].to_vec(),
+            sender: addr,
+        };
+        log::trace!("RequestPart::parse({}, {addr}) => {:?}", data.len(), res);
+        res
     }
+}
 
-    impl From<ParseType> for Type {
-        fn from(value: ParseType) -> Self {
-            Type::from_code(value.code as u8)
-        }
-    }
-
-    impl FromValue for Type {
-        type Intermediate = ParseType;
-    }
-
-    impl From<Type> for mysql::Value {
-        fn from(value: Type) -> Self {
-            mysql::Value::Int(value.to_code() as i64)
+impl PartialOrd for RequestPart {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.start < other.start {
+            Some(Ordering::Less)
+        } else if self.start > other.start {
+            Some(Ordering::Greater)
+        } else {
+            Some(Ordering::Equal)
         }
     }
 }

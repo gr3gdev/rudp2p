@@ -1,2 +1,2 @@
 [mariadb]
-max_connections = 512
+max_connections = 64
