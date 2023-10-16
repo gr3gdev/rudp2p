@@ -1,11 +1,9 @@
-use std::net::SocketAddr;
-
 use crate::{
     configuration::Configuration,
-    dao::part::RequestPart,
-    network::{request::Type, *},
+    network::{request::*, *},
     utils::{generate_uid, unwrap::unwrap_option},
 };
+use std::net::SocketAddr;
 
 #[cfg(not(feature = "ssl"))]
 fn get_public_key_size(_public_key: &Vec<u8>) -> usize {
@@ -136,10 +134,7 @@ fn get_content(request: &Request, public_key: &Vec<u8>, data: Vec<u8>) -> Vec<u8
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        dao::part::RequestPart,
-        network::{request::Type, *},
-    };
+    use crate::network::{request::*, *};
 
     use super::Multipart;
 
@@ -206,9 +201,9 @@ mod tests {
     #[cfg(feature = "ssl")]
     #[test]
     fn split() {
-        use crate::configuration::Configuration;
+        use crate::configuration::{Configuration, SSL};
 
-        let conf = Configuration::default();
+        let conf = Configuration::new(SSL::default());
         let (request, total) = create_test_request();
         let address = "127.0.0.1:9999".parse().unwrap();
         let parts = Multipart::split(&request, &conf.ssl.public_key, &address);
@@ -221,9 +216,9 @@ mod tests {
     #[cfg(feature = "ssl")]
     #[test]
     fn merge() {
-        use crate::configuration::Configuration;
+        use crate::configuration::{Configuration, SSL};
 
-        let conf = Configuration::default();
+        let conf = Configuration::new(SSL::default());
         let (request, _) = create_test_request();
         let address = "127.0.0.1:9999".parse().unwrap();
         let parts = Multipart::split(&request, &conf.ssl.public_key, &address);

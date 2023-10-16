@@ -1,7 +1,10 @@
 use crate::{
     configuration::Configuration,
-    dao,
-    network::{request::Type, *},
+    dao::PeerDao,
+    network::{
+        request::{RequestPart, Type},
+        *,
+    },
     observer::Observer,
     service::{
         connection::ConnectionService, disconnection::DisconnectionService,
@@ -21,26 +24,15 @@ use std::{
 
 static END: &[u8] = "PL3AZE 5T0P".as_bytes();
 
+#[derive(Debug)]
 pub(crate) struct PeerInstance {
-    pub(crate) pool: Arc<dao::Pool>,
     pub(crate) socket: UdpSocket,
     pub(crate) configuration: Configuration,
-}
-
-impl Debug for PeerInstance {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PeerInstance")
-            .field("pool", &self.pool)
-            .field("socket", &self.socket)
-            .field("configuration", &self.configuration)
-            .finish()
-    }
 }
 
 impl Clone for PeerInstance {
     fn clone(&self) -> Self {
         Self {
-            pool: self.pool.clone(),
             socket: unwrap_result(self.socket.try_clone(), "Unable to clone socket"),
             configuration: self.configuration.clone(),
         }
@@ -49,11 +41,7 @@ impl Clone for PeerInstance {
 
 impl PeerInstance {
     pub(crate) async fn new(configuration: &Configuration, socket: &UdpSocket) -> Self {
-        // Init database
-        let pool = dao::init(configuration).await;
-
         let instance = Self {
-            pool: Arc::new(pool),
             socket: unwrap_result(socket.try_clone(), "Unable to clone socket"),
             configuration: configuration.clone(),
         };
@@ -78,27 +66,29 @@ pub(crate) fn stop_job(socket: &UdpSocket) -> () {
 }
 
 /// Start a thread
-pub(crate) async fn start_socket_job<O>(
+pub(crate) async fn start_socket_job<O, D>(
     configuration: &Configuration,
     socket: &UdpSocket,
+    dao: &Arc<Mutex<D>>,
     observer: O,
 ) -> PeerInstance
 where
     O: Observer,
+    D: PeerDao,
 {
     // Init the peer instance for internal threads
     let instance = PeerInstance::new(configuration, &socket).await;
     let observer = Arc::new(Mutex::new(observer));
     let thread_instance = instance.clone();
 
+    // Init DAO
+    dao.lock().unwrap().init().await;
+    let dao = Arc::clone(dao);
+
     // Thread
     thread::spawn(move || {
         let mut buf = [0; 2048];
-        block_on(async {
-            if dao::thread::update(&thread_instance.pool, true).await < 1 {
-                log::error!("[DAO] Unable to update thread status");
-            }
-        });
+        block_on(dao.lock().unwrap().update_status(true));
         log::info!("Peer started on port {}.", instance.configuration.port);
         loop {
             log::debug!("Waiting message...");
@@ -109,6 +99,7 @@ where
                         addr,
                         buf,
                         number_of_bytes,
+                        Arc::clone(&dao),
                     ));
                     if let ControlFlow::Break(reason) = control_flow {
                         log::debug!("{reason}");
@@ -119,6 +110,7 @@ where
                             &part.uid,
                             part.total,
                             Arc::clone(&observer),
+                            Arc::clone(&dao),
                         ));
                     }
                 }
@@ -129,11 +121,7 @@ where
                 Err(e) => log::error!("{e}"),
             }
         }
-        block_on(async {
-            if dao::thread::update(&thread_instance.pool, false).await < 1 {
-                log::error!("[DAO] Unable to update thread status");
-            }
-        });
+        block_on(dao.lock().unwrap().update_status(false));
         log::info!("Peer stopped on port {}.", instance.configuration.port);
     });
     log::trace!(
@@ -145,27 +133,31 @@ where
     instance
 }
 
-async fn save_part_or_break(
+async fn save_part_or_break<D>(
     instance: &PeerInstance,
     addr: SocketAddr,
     buf: [u8; 2048],
     number_of_bytes: usize,
-) -> (ControlFlow<String>, Option<dao::part::RequestPart>) {
-    let blocked = dao::block::select_all(&instance.pool).await;
+    dao: Arc<Mutex<D>>,
+) -> (ControlFlow<String>, Option<RequestPart>)
+where
+    D: PeerDao,
+{
+    let blocked = dao.lock().unwrap().find_all_block().await;
     // Only if address is not blocked
     let res = if !blocked.contains(&addr) {
         let data = buf[..number_of_bytes].to_vec();
         if data == END {
             // Receive END
-            let peers = dao::remote::select_all(&instance.pool).await;
+            let peers = dao.lock().unwrap().find_all_remotes().await;
             for remote in peers {
                 send_disonnection(instance, remote.addr);
             }
             (ControlFlow::Break(String::from("Receive END")), None)
         } else {
             // Save request part
-            let part = dao::part::RequestPart::parse(data, addr);
-            if dao::part::add(&instance.pool, &part).await < 1 {
+            let part = RequestPart::parse(data, addr);
+            if dao.lock().unwrap().add_request_part(&part).await < 1 {
                 log::error!("[DAO] Unable to save request part {}", part.uid);
                 (ControlFlow::Continue(()), None)
             } else {
@@ -202,27 +194,33 @@ fn send_disonnection(instance: &PeerInstance, addr: SocketAddr) {
     );
 }
 
-fn is_complete_parts(parts: &Vec<dao::part::RequestPart>, total: usize) -> bool {
+fn is_complete_parts(parts: &Vec<RequestPart>, total: usize) -> bool {
     let total_parts: usize = parts.iter().map(|r| r.content_size).sum();
     let res = total_parts == total;
     log::trace!("is_complete_parts({:?}, {total}) => {res}", parts);
     res
 }
 
-async fn process_complete_parts<O>(
+async fn process_complete_parts<O, D>(
     instance: &PeerInstance,
     part_uid: &String,
     total: usize,
     observer: Arc<Mutex<O>>,
+    dao: Arc<Mutex<D>>,
 ) -> ()
 where
     O: Observer,
+    D: PeerDao,
 {
     log::trace!(
         "process_complete_parts({:?}, {part_uid}, {total}, observer)",
         instance
     );
-    let parts = dao::part::select_by_uid(&instance.pool, part_uid).await;
+    let parts = dao
+        .lock()
+        .unwrap()
+        .find_requests_part_by_uid(part_uid)
+        .await;
     // Check parts are completed
     if is_complete_parts(&parts, total) {
         let instance = instance.clone();
@@ -231,13 +229,26 @@ where
         thread::spawn(move || {
             // Request is merged and completed : clean table
             block_on(async {
-                if dao::part::remove_by_uid(&instance.pool, &part_uid).await < 1 {
+                if dao
+                    .lock()
+                    .unwrap()
+                    .remove_request_part_by_uid(&part_uid)
+                    .await
+                    < 1
+                {
                     log::error!("[DAO] Unable to remove request part {}", part_uid);
                 }
                 // Merge parts into Request
                 let (request, remote_addr) = Multipart::merge(&parts, &instance.configuration);
                 // Process the request
-                process_request(&instance, &request, &remote_addr, Arc::clone(&observer)).await;
+                process_request(
+                    &instance,
+                    &request,
+                    &remote_addr,
+                    Arc::clone(&observer),
+                    Arc::clone(&dao),
+                )
+                .await;
             });
         });
     } else {
@@ -245,14 +256,16 @@ where
     }
 }
 
-async fn process_request<O>(
+async fn process_request<O, D>(
     instance: &PeerInstance,
     request: &Request,
     remote_addr: &SocketAddr,
     observer: Arc<Mutex<O>>,
+    dao: Arc<Mutex<D>>,
 ) -> ()
 where
     O: Observer,
+    D: PeerDao,
 {
     log::trace!(
         "process_request({:?}, {:?}, {remote_addr}, observer)",
@@ -265,7 +278,7 @@ where
             process_response(
                 &instance,
                 &remote_addr,
-                ConnectionService::execute(&instance, &request, &remote_addr, observer).await,
+                ConnectionService::execute(&instance, &request, &remote_addr, observer, dao).await,
             )
             .await
         }
@@ -273,7 +286,7 @@ where
             process_response(
                 &instance,
                 &remote_addr,
-                DisconnectionService::execute(&instance, &remote_addr, observer).await,
+                DisconnectionService::execute(&instance, &remote_addr, observer, dao).await,
             )
             .await
         }
@@ -281,7 +294,7 @@ where
             process_response(
                 &instance,
                 &remote_addr,
-                MessageService::execute(&instance, &request, &remote_addr, observer).await,
+                MessageService::execute(&instance, &request, &remote_addr, observer, dao).await,
             )
             .await
         }

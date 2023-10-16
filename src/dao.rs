@@ -1,178 +1,230 @@
-use crate::{
-    configuration::{Configuration, DatabaseUpgradeMode},
-    utils::unwrap::{unwrap_option, unwrap_result},
+use crate::{network::request::RequestPart, peer::RemotePeer};
+use async_trait::async_trait;
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
 };
-use std::time::Duration;
 
-#[cfg(feature = "mysql")]
-use mysql::{Params, Result, Row};
-#[cfg(feature = "sqlite")]
-use rusqlite::{Params, Result, Row};
+#[async_trait]
+pub trait PeerDao: Debug + Send + 'static {
+    async fn init(&mut self) -> ();
 
-pub(crate) mod block;
-pub(crate) mod part;
-pub(crate) mod remote;
-pub(crate) mod thread;
+    #[cfg(feature = "ssl")]
+    async fn add_remote(&self, address: &SocketAddr, public_key: &Vec<u8>) -> RemotePeer;
+    #[cfg(not(feature = "ssl"))]
+    async fn add_remote(&self, address: &SocketAddr) -> RemotePeer;
 
-#[cfg(feature = "sqlite")]
-pub(crate) type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
-#[cfg(feature = "sqlite")]
-pub(crate) type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
+    async fn remove_remote(&self, remote: &RemotePeer) -> usize;
 
-#[cfg(feature = "mysql")]
-pub(crate) type Pool = r2d2::Pool<r2d2_mysql::MySqlConnectionManager>;
-#[cfg(feature = "mysql")]
-pub(crate) type Connection = r2d2::PooledConnection<r2d2_mysql::MySqlConnectionManager>;
+    async fn find_remotes_by_address(&self, address: &SocketAddr) -> Vec<RemotePeer>;
 
-pub(crate) trait ToSql {
-    fn to_sql(&self) -> &str;
+    async fn find_all_remotes(&self) -> Vec<RemotePeer>;
+
+    async fn add_request_part(&self, part: &RequestPart) -> usize;
+
+    async fn remove_request_part_by_uid(&self, uid: &String) -> usize;
+
+    async fn find_requests_part_by_uid(&self, uid: &String) -> Vec<RequestPart>;
+
+    async fn block(&self, address: &SocketAddr) -> usize;
+
+    async fn unblock(&self, address: &SocketAddr) -> usize;
+
+    async fn find_all_block(&self) -> Vec<SocketAddr>;
+
+    async fn update_status(&self, value: bool) -> ();
+
+    async fn find_status(&self) -> bool;
 }
 
-#[cfg(feature = "sqlite")]
-pub(crate) const EMPTY: &[&dyn rusqlite::ToSql] = rusqlite::params![];
-#[cfg(feature = "mysql")]
-pub(crate) const EMPTY: Params = Params::Empty;
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryDao {
+    remote_peer_dao: RemotePeerDao,
+    request_part_dao: RequestPartDao,
+    bloc_dao: BlockDao,
+    status_dao: StatusDao,
+}
 
-/// Get a generic connection (compatible "sqlite" and "mysql")
-pub(crate) async fn get_connection(pool: &Pool) -> Connection {
-    let pool = pool.clone();
-    let mut connection = pool.try_get();
-    if connection.is_none() {
-        let mut count = 1;
-        while connection.is_none() && count < 5 {
-            connection = pool.try_get();
-            std::thread::sleep(Duration::from_millis(count * 100));
-            count = count + 1;
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RemotePeerDao {
+    remotes: Arc<Mutex<Vec<RemotePeer>>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RequestPartDao {
+    parts: Arc<Mutex<HashMap<String, Vec<RequestPart>>>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BlockDao {
+    black_list: Arc<Mutex<Vec<SocketAddr>>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct StatusDao {
+    status: Arc<Mutex<bool>>,
+}
+
+impl RemotePeerDao {
+    #[cfg(feature = "ssl")]
+    fn add(&self, address: &SocketAddr, public_key: &Vec<u8>) -> RemotePeer {
+        let mut remotes = self.remotes.lock().unwrap();
+        let remote = RemotePeer {
+            addr: address.clone(),
+            public_key: public_key.clone(),
+        };
+        remotes.push(remote.clone());
+        remote
+    }
+    #[cfg(not(feature = "ssl"))]
+    fn add(&self, address: &SocketAddr) -> RemotePeer {
+        let mut remotes = self.remotes.lock().unwrap();
+        let remote = RemotePeer {
+            addr: address.clone(),
+        };
+        remotes.push(remote.clone());
+        remote
+    }
+
+    fn remove(&self, remote: &RemotePeer) -> usize {
+        let mut remotes = self.remotes.lock().unwrap();
+        let index = remotes.iter().position(|r| r == remote).unwrap();
+        remotes.remove(index);
+        1
+    }
+
+    fn find_by_address(&self, address: &SocketAddr) -> Vec<RemotePeer> {
+        self.remotes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| &r.addr == address)
+            .map(RemotePeer::clone)
+            .collect()
+    }
+
+    fn find_all(&self) -> Vec<RemotePeer> {
+        self.remotes.lock().unwrap().clone()
+    }
+}
+
+impl RequestPartDao {
+    fn add(&self, part: &RequestPart) -> usize {
+        let mut parts = self.parts.lock().unwrap();
+        match parts.entry(part.uid.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                let list = o.get_mut();
+                list.push(part.clone());
+            }
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(vec![part.clone()]);
+            }
         }
+        1
     }
-    unwrap_option(connection, "Unable to get a connection")
-}
 
-async fn create_or_upgrade_db(pool: &Pool, database_upgrade_mode: &DatabaseUpgradeMode) {
-    log::trace!("create_or_upgrade_db({:?})", pool);
-    remote::create_or_upgrade(pool, database_upgrade_mode).await;
-    part::create_or_upgrade(pool, database_upgrade_mode).await;
-    block::create_or_upgrade(pool, database_upgrade_mode).await;
-    thread::create_or_upgrade(pool, database_upgrade_mode).await;
-}
-
-#[cfg(feature = "sqlite")]
-pub(crate) async fn init(configuration: &Configuration) -> Pool {
-    let manager = match configuration.database_mode.clone() {
-        crate::configuration::SqliteMode::Memory => r2d2_sqlite::SqliteConnectionManager::memory(),
-        crate::configuration::SqliteMode::File(path) => {
-            r2d2_sqlite::SqliteConnectionManager::file(&path)
-        }
+    fn remove_by_uid(&self, uid: &String) -> usize {
+        let mut parts = self.parts.lock().unwrap();
+        parts.remove(uid);
+        1
     }
-    .with_init(|c| {
-        c.execute_batch(
-            "PRAGMA journal_mode=wal2; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=1;",
-        )
-    });
-    let pool = unwrap_result(
-        Pool::builder().max_size(16).build(manager),
-        "Unable to initialize pool",
-    );
-    create_or_upgrade_db(&pool, &configuration.database_upgrade_mode).await;
-    log::trace!("init({:?}) => {:?}", configuration, pool);
-    pool
-}
 
-#[cfg(feature = "mysql")]
-pub(crate) async fn init(configuration: &Configuration) -> Pool {
-    if let Some(url) = &configuration.database_url {
-        let opts = unwrap_result(
-            mysql::Opts::from_url(url),
-            format!("Error when parsing {:?}", configuration).as_str(),
-        );
-        let params = mysql::OptsBuilder::from_opts(opts);
-        let manager = r2d2_mysql::MySqlConnectionManager::new(params);
-        let pool = unwrap_result(
-            Pool::builder().max_size(16).build(manager),
-            "Unable to initialize pool",
-        );
-        create_or_upgrade_db(&pool, &configuration.database_upgrade_mode).await;
-        log::trace!("init({:?}) => {:?}", configuration, pool);
-        pool
-    } else {
-        log::error!("Error in configuration : {:?}", configuration);
-        panic!("Missing databse url !")
+    fn find_by_uid(&self, uid: &String) -> Vec<RequestPart> {
+        self.parts.lock().unwrap().get(uid).unwrap().clone()
     }
 }
 
-#[cfg(feature = "sqlite")]
-pub(crate) async fn execute<S, P>(pool: &Pool, sql: S, params: P) -> usize
-where
-    S: ToSql,
-    P: Params,
-{
-    let sql = sql.to_sql();
-    let connection = get_connection(pool).await;
-    let nb_updates = unwrap_result(
-        connection.execute(sql, params),
-        format!("Unable to execute : {sql}").as_str(),
-    );
-    log::trace!("execute(pool, {sql}, params) => {nb_updates}");
-    nb_updates
-}
-
-#[cfg(feature = "mysql")]
-pub(crate) async fn execute<S: ToSql>(pool: &Pool, sql: S, params: Params) -> usize {
-    use mysql::prelude::Queryable;
-
-    let sql = sql.to_sql();
-    let mut connection = get_connection(pool).await;
-    let res = connection.exec_iter(sql, params.clone());
-    log::trace!("execute(pool, {sql}, {:?}) => {:?}", params, res);
-    let res = unwrap_result(res, format!("Unable to execute : {sql}").as_str());
-    res.affected_rows() as usize
-}
-
-#[cfg(feature = "sqlite")]
-pub(crate) async fn prepare<S, P, F, T>(pool: &Pool, sql: S, params: P, f: F) -> Vec<T>
-where
-    S: ToSql,
-    P: Params,
-    F: Fn(&Row) -> Result<T>,
-    T: std::fmt::Debug,
-{
-    let sql = sql.to_sql();
-    let connection = get_connection(pool).await;
-    let mut statement = unwrap_result(
-        connection.prepare(sql),
-        format!("Unable to prepare : {sql}").as_str(),
-    );
-    let res = unwrap_result(
-        statement
-            .query_map(params, |row| f(row))
-            .and_then(Iterator::collect),
-        format!("Unable to query : {sql}").as_str(),
-    );
-    log::trace!("prepare(pool, {sql}, params, mapper) => {:?}", res);
-    res
-}
-
-#[cfg(feature = "mysql")]
-pub(crate) async fn prepare<S, F, T>(pool: &Pool, sql: S, params: Params, mapper: F) -> Vec<T>
-where
-    S: ToSql,
-    F: Fn(&Row) -> Result<T>,
-    T: std::fmt::Debug,
-{
-    use mysql::prelude::Queryable;
-
-    let sql = sql.to_sql();
-    let mut connection = get_connection(pool).await;
-    let res = unwrap_result(
-        connection.exec_iter(sql, params.clone()),
-        format!("Unable to query : {sql}").as_str(),
-    );
-    let mut result = Vec::new();
-    for row in res {
-        let row = unwrap_result(row, "Unable to read row");
-        let value = unwrap_result(mapper(&row), &format!("Unable to map row {:?}", row));
-        result.push(value)
+impl BlockDao {
+    fn add(&self, address: &SocketAddr) -> usize {
+        let mut list = self.black_list.lock().unwrap();
+        list.push(address.clone());
+        1
     }
-    log::trace!("prepare(pool, {sql}, {:?}, mapper) => {:?}", params, result,);
-    result
+
+    fn remove(&self, address: &SocketAddr) -> usize {
+        let mut list = self.black_list.lock().unwrap();
+        let index = list.iter().position(|a| a == address).unwrap();
+        list.remove(index);
+        1
+    }
+
+    fn find_all(&self) -> Vec<SocketAddr> {
+        self.black_list.lock().unwrap().clone()
+    }
+}
+
+impl StatusDao {
+    fn update(&self, value: bool) -> () {
+        let mut status = self.status.lock().unwrap();
+        *status = value;
+    }
+
+    fn find(&self) -> bool {
+        self.status.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl PeerDao for InMemoryDao {
+    async fn init(&mut self) -> () {
+        self.remote_peer_dao = RemotePeerDao::default();
+        self.request_part_dao = RequestPartDao::default();
+        self.bloc_dao = BlockDao::default();
+        self.status_dao = StatusDao::default();
+    }
+
+    #[cfg(feature = "ssl")]
+    async fn add_remote(&self, address: &SocketAddr, public_key: &Vec<u8>) -> RemotePeer {
+        self.remote_peer_dao.add(address, public_key)
+    }
+    #[cfg(not(feature = "ssl"))]
+    async fn add_remote(&self, address: &SocketAddr) -> RemotePeer {
+        self.remote_peer_dao.add(address)
+    }
+
+    async fn remove_remote(&self, remote: &RemotePeer) -> usize {
+        self.remote_peer_dao.remove(remote)
+    }
+
+    async fn find_remotes_by_address(&self, address: &SocketAddr) -> Vec<RemotePeer> {
+        self.remote_peer_dao.find_by_address(address)
+    }
+
+    async fn find_all_remotes(&self) -> Vec<RemotePeer> {
+        self.remote_peer_dao.find_all()
+    }
+
+    async fn add_request_part(&self, part: &RequestPart) -> usize {
+        self.request_part_dao.add(part)
+    }
+
+    async fn remove_request_part_by_uid(&self, uid: &String) -> usize {
+        self.request_part_dao.remove_by_uid(uid)
+    }
+
+    async fn find_requests_part_by_uid(&self, uid: &String) -> Vec<RequestPart> {
+        self.request_part_dao.find_by_uid(uid)
+    }
+
+    async fn block(&self, address: &SocketAddr) -> usize {
+        self.bloc_dao.add(address)
+    }
+
+    async fn unblock(&self, address: &SocketAddr) -> usize {
+        self.bloc_dao.remove(address)
+    }
+
+    async fn find_all_block(&self) -> Vec<SocketAddr> {
+        self.bloc_dao.find_all()
+    }
+
+    async fn update_status(&self, value: bool) -> () {
+        self.status_dao.update(value)
+    }
+
+    async fn find_status(&self) -> bool {
+        self.status_dao.find()
+    }
 }

@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use cucumber::{gherkin::Step, World};
 use futures::{future::LocalBoxFuture, FutureExt};
 use log::debug;
-use r2d2_sqlite::SqliteConnectionManager;
 use rudp2plib::{
+    dao::InMemoryDao,
     network::{events::*, Response},
     observer::Observer,
     peer::*,
@@ -14,22 +14,26 @@ use crate::{
     dao::{
         add_connection, add_disconnection, add_message, get_peer_messages_from, init,
         is_peer_connected_with, is_peer_disconnected_with, ConnectedEvent, DisconnectedEvent,
-        MessageEvent, Pool,
+        MessageEvent,
     },
     utils::{get_time, read_file, wait_until},
 };
+
+const TIMEOUT_CONNECTION: u128 = 3000;
+const TIMEOUT_MESSAGE: u128 = 5000;
 
 #[derive(World, Debug)]
 #[world(init = Self::new)]
 pub(crate) struct PeersWorld {
     peers: HashMap<String, Peer>,
-    pool: Pool,
+    pool: crate::sqlite::Pool,
 }
 
 #[derive(Debug)]
 pub(crate) struct PeerData {
     pub(crate) name: String,
     pub(crate) port: u16,
+    pub(crate) database: String,
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +60,12 @@ impl DataTable for PeerData {
                 // NOTE: skip header
                 let name = row[0].clone();
                 let port = row[1].parse::<u16>().expect("Unable to read port number");
-                data.push(PeerData { name, port });
+                let database = row[2].clone();
+                data.push(PeerData {
+                    name,
+                    port,
+                    database,
+                });
             }
         }
         data
@@ -100,7 +109,7 @@ impl DataTable for Event {
 
 struct TestObserver {
     name: String,
-    pool: Pool,
+    pool: crate::sqlite::Pool,
 }
 
 #[async_trait]
@@ -136,8 +145,8 @@ impl Observer for TestObserver {
 
 impl PeersWorld {
     async fn new() -> Self {
-        let manager = SqliteConnectionManager::memory();
-        let pool = Pool::new(manager).expect("Unable to initialize pool");
+        let manager = r2d2_sqlite::SqliteConnectionManager::memory();
+        let pool = crate::sqlite::Pool::new(manager).expect("Unable to initialize pool");
         init(&pool).await;
         Self {
             peers: HashMap::new(),
@@ -153,7 +162,48 @@ impl PeersWorld {
                 name: peer_data.name.clone(),
                 pool: self.pool.clone(),
             };
-            let peer = Peer::new(conf, test_observer).await;
+            let peer = if peer_data.database == "Sqlite" {
+                let manager = r2d2_sqlite::SqliteConnectionManager::memory().with_init(|c| {
+                    c.execute_batch(
+                        "PRAGMA journal_mode=wal2; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=1;",
+                    )
+                });
+                let peer_pool = crate::sqlite::Pool::builder()
+                    .max_size(16)
+                    .build(manager)
+                    .expect("Unable to initialize pool");
+                Peer::new(
+                    conf,
+                    crate::sqlite::SqlitePeerDao::new(&peer_pool),
+                    test_observer,
+                )
+                .await
+            } else if peer_data.database.contains("mysql:") {
+                let opts = mysql::Opts::from_url(&peer_data.database)
+                    .or_else(|e| {
+                        log::error!("{e}");
+                        Err(e)
+                    })
+                    .unwrap();
+                let params = mysql::OptsBuilder::from_opts(opts);
+                let manager = r2d2_mysql::MySqlConnectionManager::new(params);
+                let peer_pool = crate::mysql::Pool::builder()
+                    .max_size(16)
+                    .build(manager)
+                    .or_else(|e| {
+                        log::error!("{e}");
+                        Err(e)
+                    })
+                    .unwrap();
+                Peer::new(
+                    conf,
+                    crate::mysql::MysqlPeerDao::new(&peer_pool),
+                    test_observer,
+                )
+                .await
+            } else {
+                Peer::new(conf, InMemoryDao::default(), test_observer).await
+            };
             self.peers.insert(peer_data.name, peer);
         }
     }
@@ -189,7 +239,11 @@ impl PeersWorld {
             for e in events {
                 let other = self.get_peer(&e.from).addr();
                 assert!(
-                    wait_until(&|| is_peer_connected_with(&self.pool, &peer, &other), 10000).await,
+                    wait_until(
+                        &|| is_peer_connected_with(&self.pool, &peer, &other),
+                        TIMEOUT_CONNECTION
+                    )
+                    .await,
                     "Peer {peer} is not connected with {}",
                     e.from
                 );
@@ -200,7 +254,7 @@ impl PeersWorld {
                 assert!(
                     wait_until(
                         &|| is_peer_disconnected_with(&self.pool, &peer, &other),
-                        10000
+                        TIMEOUT_CONNECTION
                     )
                     .await,
                     "Peer {peer} is not disconnected with {}",
@@ -220,7 +274,7 @@ impl PeersWorld {
                             .await;
                             messages.iter().any(|m| m.content == e.content)
                         },
-                        30000
+                        TIMEOUT_MESSAGE
                     )
                     .await,
                     "Peer {peer} has not received the message from {}",
@@ -250,7 +304,7 @@ impl PeersWorld {
                             .await
                                 == false
                         },
-                        10000
+                        TIMEOUT_CONNECTION
                     )
                     .await,
                     "Peer {peer} is connected with {}",
@@ -270,7 +324,7 @@ impl PeersWorld {
                             .await
                                 == false
                         },
-                        10000
+                        TIMEOUT_CONNECTION
                     )
                     .await,
                     "Peer {peer} is disconnected with {}",
@@ -290,7 +344,7 @@ impl PeersWorld {
                             .await;
                             messages.is_empty() || messages.iter().all(|m| m.content != e.content)
                         },
-                        30000
+                        TIMEOUT_MESSAGE
                     )
                     .await,
                     "Peer {peer} has received the message from {}",

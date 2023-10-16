@@ -1,30 +1,35 @@
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
-
 use crate::{
-    dao::remote,
+    dao::PeerDao,
     network::{Request, Response},
     observer::Observer,
     thread::PeerInstance,
     utils::unwrap::{unwrap_option, unwrap_result},
+};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
 };
 
 pub(crate) struct MessageService;
 
 impl MessageService {
     #[cfg(not(feature = "ssl"))]
-    pub(crate) async fn execute<O>(
+    pub(crate) async fn execute<O, D>(
         instance: &PeerInstance,
         request: &Request,
         remote_addr: &SocketAddr,
         observer: Arc<Mutex<O>>,
+        dao: Arc<Mutex<D>>,
     ) -> (Option<Response>, Vec<u8>)
     where
         O: Observer,
+        D: PeerDao,
     {
-        let remotes = remote::select_by_address(&instance.pool, remote_addr).await;
+        let remotes = dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(remote_addr)
+            .await;
         let res = if !remotes.is_empty() {
             let remote = unwrap_option(remotes.first(), "Unable to get the first remote peer");
             let message = request.to_message_event(remote);
@@ -45,16 +50,22 @@ impl MessageService {
     }
 
     #[cfg(feature = "ssl")]
-    pub(crate) async fn execute<O>(
+    pub(crate) async fn execute<O, D>(
         instance: &PeerInstance,
         request: &Request,
         remote_addr: &SocketAddr,
         observer: Arc<Mutex<O>>,
+        dao: Arc<Mutex<D>>,
     ) -> (Option<Response>, Vec<u8>)
     where
         O: Observer,
+        D: PeerDao,
     {
-        let remotes = remote::select_by_address(&instance.pool, remote_addr).await;
+        let remotes = dao
+            .lock()
+            .unwrap()
+            .find_remotes_by_address(remote_addr)
+            .await;
         let res = if !remotes.is_empty() {
             let remote = unwrap_option(remotes.first(), "Unable to get the first remote peer");
             let message = request.to_message_event(remote);

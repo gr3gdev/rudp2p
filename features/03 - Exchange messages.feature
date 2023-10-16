@@ -2,11 +2,11 @@ Feature: Exchange messages
 
   Scenario: A peer sends a text to all peers
     Given the following peers are started
-      | Name | Port |
-      | P0   | 9300 |
-      | P1   | 9301 |
-      | P2   | 9302 |
-      | P3   | 9303 |
+      | Name | Port | Database                                 |
+      | P0   | 9300 | InMemory                                 |
+      | P1   | 9301 | mysql://cucumber:test@localhost:33061/P1 |
+      | P2   | 9302 | InMemory                                 |
+      | P3   | 9303 | Sqlite                                   |
     When the peer "P1" connects to "P0"
     Then the peer "P0" receives
       | Event     | From |
@@ -42,11 +42,11 @@ Feature: Exchange messages
 
   Scenario: A peer sends a file to a peer
     Given the following peers are started
-      | Name | Port |
-      | P0   | 9400 |
-      | P1   | 9401 |
-      | P2   | 9402 |
-      | P3   | 9403 |
+      | Name | Port | Database                                 |
+      | P0   | 9400 | mysql://cucumber:test@localhost:33060/P0 |
+      | P1   | 9401 | InMemory                                 |
+      | P2   | 9402 | Sqlite                                   |
+      | P3   | 9403 | InMemory                                 |
     When the peer "P1" connects to "P0"
     Then the peer "P0" receives
       | Event     | From |

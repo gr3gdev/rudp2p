@@ -2,10 +2,10 @@ Feature: Block peers
 
   Scenario: A block peer does not receive any messages until he has unblock
     Given the following peers are started
-      | Name | Port |
-      | P0   | 9100 |
-      | P1   | 9101 |
-      | P2   | 9102 |
+      | Name | Port | Database |
+      | P0   | 9100 | InMemory |
+      | P1   | 9101 | Sqlite   |
+      | P2   | 9102 | InMemory |
     When the peer "P1" connects to "P0"
     Then the peer "P1" receives
       | Event     | From |
@@ -46,10 +46,10 @@ Feature: Block peers
 
   Scenario: A block peer can not send any messages until he has unblock
     Given the following peers are started
-      | Name | Port |
-      | P0   | 9200 |
-      | P1   | 9201 |
-      | P2   | 9202 |
+      | Name | Port | Database                                 |
+      | P0   | 9200 | Sqlite                                   |
+      | P1   | 9201 | InMemory                                 |
+      | P2   | 9202 | mysql://cucumber:test@localhost:33062/P2 |
     When the peer "P1" connects to "P0"
     Then the peer "P1" receives
       | Event     | From |

@@ -1,9 +1,6 @@
-use std::net::SocketAddr;
-
+use crate::sqlite::*;
 use log::debug;
-
-pub(crate) type Pool = r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>;
-pub(crate) type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
+use std::net::SocketAddr;
 
 #[derive(Debug)]
 pub(crate) struct ConnectedEvent {
@@ -22,11 +19,6 @@ pub(crate) struct MessageEvent {
     pub(crate) from: SocketAddr,
     pub(crate) to: String,
     pub(crate) content: Vec<u8>,
-}
-
-async fn get_connection(pool: &Pool) -> Connection {
-    let pool = pool.clone();
-    pool.get().expect("Unable to obtain pool")
 }
 
 async fn create_connections_table(connection: &Connection) {
