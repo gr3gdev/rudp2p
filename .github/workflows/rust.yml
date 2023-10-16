@@ -29,7 +29,9 @@ jobs:
 
       - name: Compatibility WASM
         working-directory: ./wasm
-        run: cargo build --lib --target wasm32-unknown-unknown
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --lib --target wasm32-unknown-unknown
 
       - name: Run tests with default features
         run: cargo test
