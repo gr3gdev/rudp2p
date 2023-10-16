@@ -38,4 +38,6 @@ cucumber = { version = "0.20", features = ["tracing", "timestamps"] }
 tracing-subscriber = "0.3"
 r2d2 = "0.8"
 r2d2_sqlite = "0.22"
+r2d2_mysql = "24.0"
 rusqlite = { version = "0.29", features = ["unlock_notify", "release_memory"] }
+mysql = "24.0"

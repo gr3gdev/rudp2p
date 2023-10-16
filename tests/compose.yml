@@ -1,0 +1,53 @@
+version: "3.2"
+services:
+  mysql_p0:
+    image: mariadb
+    ports:
+      - 33060:3306
+    environment:
+      - MARIADB_USER=cucumber
+      - MARIADB_PASSWORD=test
+      - MARIADB_DATABASE=P0
+      - MARIADB_ROOT_PASSWORD=simpletest
+    volumes:
+      - ./dump:/docker-entrypoint-initdb.d
+      - ./conf:/etc/mysql/conf.d
+
+  mysql_p1:
+    image: mariadb
+    ports:
+      - 33061:3306
+    environment:
+      - MARIADB_USER=cucumber
+      - MARIADB_PASSWORD=test
+      - MARIADB_DATABASE=P1
+      - MARIADB_ROOT_PASSWORD=simpletest
+    volumes:
+      - ./dump:/docker-entrypoint-initdb.d
+      - ./conf:/etc/mysql/conf.d
+
+  mysql_p2:
+    image: mariadb
+    ports:
+      - 33062:3306
+    environment:
+      - MARIADB_USER=cucumber
+      - MARIADB_PASSWORD=test
+      - MARIADB_DATABASE=P2
+      - MARIADB_ROOT_PASSWORD=simpletest
+    volumes:
+      - ./dump:/docker-entrypoint-initdb.d
+      - ./conf:/etc/mysql/conf.d
+
+  mysql_p3:
+    image: mariadb
+    ports:
+      - 33063:3306
+    environment:
+      - MARIADB_USER=cucumber
+      - MARIADB_PASSWORD=test
+      - MARIADB_DATABASE=P3
+      - MARIADB_ROOT_PASSWORD=simpletest
+    volumes:
+      - ./dump:/docker-entrypoint-initdb.d
+      - ./conf:/etc/mysql/conf.d

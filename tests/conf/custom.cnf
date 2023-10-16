@@ -1,0 +1,2 @@
+[mariadb]
+max_connections = 64

@@ -12,8 +12,10 @@ use tracing_subscriber::{
 
 pub(crate) mod dao;
 pub(crate) mod data;
+pub(crate) mod mysql;
 pub(crate) mod report;
 pub(crate) mod steps;
+pub(crate) mod sqlite;
 pub(crate) mod utils;
 
 #[cfg(not(feature = "ssl"))]
