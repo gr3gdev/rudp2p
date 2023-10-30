@@ -5,6 +5,7 @@ use crate::{
     utils::{multipart::Multipart, unwrap::unwrap_result},
 };
 use log::error;
+use serialize_bits::ser::SerializerData;
 use std::{
     fmt::Debug,
     net::{SocketAddr, UdpSocket},
@@ -12,31 +13,6 @@ use std::{
 
 pub mod events;
 pub mod request;
-
-/// # Data
-///
-/// Trait for convert data of a Request or a Response.
-pub trait Data: Debug {
-    fn to_vec(&self) -> Vec<u8>;
-}
-
-impl Data for String {
-    fn to_vec(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
-}
-
-impl Data for &str {
-    fn to_vec(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
-}
-
-impl Data for Vec<u8> {
-    fn to_vec(&self) -> Vec<u8> {
-        self.clone()
-    }
-}
 
 /// # Request
 ///
@@ -60,13 +36,13 @@ impl Request {
     /// New Request with Data.
     pub fn new<D>(data: D) -> Self
     where
-        D: Data,
+        D: SerializerData,
     {
         let instance = Self {
             request_type: Type::Message,
-            content: data.to_vec().clone(),
+            content: data.to_data().clone(),
         };
-        log::trace!("Request::new({:?}) => {:?}", data, instance);
+        log::trace!("Request::new(data) => {:?}", instance);
         instance
     }
 
@@ -86,10 +62,7 @@ impl Request {
 
     #[cfg(feature = "ssl")]
     pub(crate) fn new_connection(configuration: &Configuration) -> Self {
-        use crate::utils::encoder::Encoder;
-
-        let content = Vec::new();
-        let content = Encoder::add_with_size(&content, &configuration.ssl.public_key);
+        let content = configuration.ssl.public_key.to_data();
         let instance = Self {
             request_type: Type::Connection,
             content,
@@ -159,11 +132,10 @@ impl Request {
 
     #[cfg(feature = "ssl")]
     pub(crate) fn parse_public_key(&self) -> Vec<u8> {
-        use crate::utils::decoder::Decoder;
+        use serialize_bits::des::DeserializerData;
 
         let content = self.content.clone();
-        let (public_key_size, next_index) = Decoder::get_size(&content, 0);
-        let pk = content[next_index..next_index + public_key_size].to_vec();
+        let (pk, _) = Vec::from_data(&content, 0);
         log::trace!("Request::parse_public_key() => {}", pk.len());
         pk
     }
@@ -180,7 +152,8 @@ impl Request {
     #[cfg(not(feature = "ssl"))]
     pub(crate) fn send(&self, socket: &UdpSocket, addr: &SocketAddr) -> () {
         log::trace!("Request::send({:?}, {addr})", socket);
-        let parts = Multipart::split(self, &vec![], addr);
+        let socket_address = unwrap_result(socket.local_addr(), "Unable to get the local address");
+        let parts = Multipart::split(self, &vec![], &socket_address);
         for part in parts {
             socket.send_to(&part.to_data(), addr).unwrap_or_else(|e| {
                 error!("Unable to send request : {e}");
@@ -192,7 +165,8 @@ impl Request {
     #[cfg(feature = "ssl")]
     pub(crate) fn send(&self, socket: &UdpSocket, addr: &SocketAddr, public_key: &Vec<u8>) -> () {
         log::trace!("Request::send({:?}, {addr}, {})", socket, public_key.len());
-        let parts = Multipart::split(self, public_key, addr);
+        let socket_address = unwrap_result(socket.local_addr(), "Unable to get the local address");
+        let parts = Multipart::split(self, public_key, &socket_address);
         for part in parts {
             socket.send_to(&part.to_data(), addr).unwrap_or_else(|e| {
                 error!("Unable to send request : {e}");
@@ -225,13 +199,13 @@ impl Response {
     /// New Response from Data.
     pub fn new<D>(data: D) -> Self
     where
-        D: Data,
+        D: SerializerData,
     {
         let instance = Self {
             address: None,
-            data: data.to_vec(),
+            data: data.to_data(),
         };
-        log::trace!("Response::new({:?}) => {:?}", data, instance);
+        log::trace!("Response::new(data) => {:?}", instance);
         instance
     }
 

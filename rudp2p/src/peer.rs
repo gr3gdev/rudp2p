@@ -237,6 +237,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use futures::executor::block_on;
+    use serialize_bits::des::DeserializerData;
     use std::{
         collections::HashMap,
         fmt::Debug,
@@ -295,10 +296,12 @@ mod tests {
             match messages.entry(m.from.addr) {
                 std::collections::hash_map::Entry::Occupied(mut o) => {
                     let list: &mut Vec<String> = o.get_mut();
-                    list.push(String::from_utf8(m.content.clone()).unwrap());
+                    let (value, _) = String::from_data(&m.content, 0);
+                    list.push(value);
                 }
                 std::collections::hash_map::Entry::Vacant(v) => {
-                    v.insert(vec![String::from_utf8(m.content.clone()).unwrap()]);
+                    let (value, _) = String::from_data(&m.content, 0);
+                    v.insert(vec![value]);
                 }
             }
             None
@@ -316,7 +319,7 @@ mod tests {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_millis();
-            if current - start > 30000 {
+            if current - start > 10000 {
                 panic!("Timeout !");
             }
         }
@@ -333,6 +336,7 @@ mod tests {
 
     #[test]
     fn validate() {
+        //env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
         let (peer1, test1) = prepare(9901);
         let (peer2, test2) = prepare(9902);
         let (peer3, test3) = prepare(9903);
@@ -379,7 +383,7 @@ mod tests {
         );
 
         // Send message to all
-        block_on(peer2.send_to_all(&Request::new("Hello everybody !")));
+        block_on(peer2.send_to_all(&Request::new(String::from("Hello everybody !"))));
         wait_while_condition(&|| {
             test1.messages.lock().unwrap().len() < 1 || test3.messages.lock().unwrap().len() < 1
         });
@@ -396,7 +400,7 @@ mod tests {
         let remote_peer1 = binding.iter().find(|r| r.addr == peer1.addr()).unwrap();
 
         // Send message to peer
-        block_on(peer2.send_to(Request::new("What's your name ?"), &remote_peer1.addr));
+        block_on(peer2.send_to(Request::new(String::from("What's your name ?")), &remote_peer1.addr));
         wait_while_condition(&|| {
             test1
                 .messages

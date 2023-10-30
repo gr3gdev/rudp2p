@@ -1,0 +1,44 @@
+[package]
+name = "rudp2p"
+description = "Library to exchange P2P messages with UDP protocol"
+version = "0.4.0"
+authors = ["Grégory Tardivel"]
+repository = "https://github.com/gr3gdev/rudp2p"
+edition = "2021"
+license-file = "LICENSE"
+keywords = ["P2P", "UDP"]
+categories = ["network-programming", "web-programming"]
+exclude = ["/features", "/.github", "/target", "/reports", "/wasm"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lib]
+name = "rudp2plib"
+path = "src/lib.rs"
+doc = true
+
+[[test]]
+name = "features"
+harness = false
+
+[features]
+ssl = ["dep:openssl", "dep:openssl-sys"]
+
+[dependencies]
+async-trait = "0.1"
+env_logger = "0.10"
+futures = "0.3"
+log = "0.4"
+openssl = { version = "0.10", optional = true }
+openssl-sys = { version = "0.9", optional = true }
+serialize_bits = "0.1"
+
+[dev-dependencies]
+cucumber = { version = "0.20", features = ["tracing", "timestamps"] }
+tracing-subscriber = "0.3"
+r2d2 = "0.8"
+r2d2_sqlite = "0.22"
+r2d2_mysql = "24.0"
+rusqlite = { version = "0.29", features = ["unlock_notify", "release_memory"] }
+mysql = "24.0"
