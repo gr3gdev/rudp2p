@@ -3,7 +3,10 @@ name = "rudp2p_derive"
 version = "0.1.0"
 description = "Macros 1.1 implementation of #[derive(SerializeData, DeserializeData)]"
 edition = "2021"
+license-file = "LICENSE"
 keywords = ["rudp2p", "serialization", "derive"]
+categories = ["macro", "proc_macro"]
+exclude = ["/target"]
 
 [lib]
 name = "rudp2p_derive"
