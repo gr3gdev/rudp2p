@@ -12,6 +12,7 @@ use crate::{
     },
     utils::{multipart::Multipart, unwrap::unwrap_result},
 };
+use serialize_bits::des::DeserializerData;
 use futures::executor::block_on;
 use std::{
     fmt::Debug,
@@ -156,7 +157,7 @@ where
             (ControlFlow::Break(String::from("Receive END")), None)
         } else {
             // Save request part
-            let part = RequestPart::parse(data, addr);
+            let (part, _) = RequestPart::from_data(&data, 0);
             if dao.lock().unwrap().add_request_part(&part).await < 1 {
                 log::error!("[DAO] Unable to save request part {}", part.uid);
                 (ControlFlow::Continue(()), None)

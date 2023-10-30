@@ -5,4 +5,4 @@ pub mod observer;
 pub mod peer;
 pub(crate) mod service;
 pub(crate) mod thread;
-pub(crate) mod utils;
+pub mod utils;
