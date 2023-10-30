@@ -1,0 +1,22 @@
+[package]
+name = "rudp2p_derive"
+version = "0.1.0"
+description = "Macros 1.1 implementation of #[derive(SerializeData, DeserializeData)]"
+edition = "2021"
+keywords = ["rudp2p", "serialization", "derive"]
+
+[lib]
+name = "rudp2p_derive"
+proc-macro = true
+
+[[test]]
+name = "macro"
+
+[dependencies]
+proc-macro2 = "1.0.69"
+quote = "1.0.33"
+serialize_bits = "0.1"
+syn = "2.0.38"
+
+[dev-dependencies]
+rudp2p = { version = "0.4.0", path = "../rudp2p" }

@@ -8,6 +8,7 @@ use rudp2plib::{
     observer::Observer,
     peer::*,
 };
+use serialize_bits::ser::SerializerData;
 use std::{collections::HashMap, time::Duration};
 
 use crate::{
@@ -87,9 +88,9 @@ impl DataTable for Event {
                 if row.len() == 3 {
                     let data = row[1].clone();
                     if data.starts_with("file:") {
-                        content = read_file(&data[5..].trim());
+                        content = read_file(&data[5..].trim()).to_data();
                     } else {
-                        content = data.as_bytes().to_vec();
+                        content = data.to_data();
                     }
                     from = row[2].clone();
                 } else {

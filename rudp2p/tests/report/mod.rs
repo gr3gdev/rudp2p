@@ -185,6 +185,14 @@ impl<Out: io::Write> Markdown<Out> {
         .normalized()
     }
 
+    pub fn is_failed(&self) -> bool {
+        self.features.iter().any(|f| {
+            f.elements
+                .iter()
+                .any(|e| e.steps.iter().any(|s| s.result.status == Status::Failed))
+        })
+    }
+
     fn handle_scenario_event<W>(
         &mut self,
         feature: &Arc<gherkin::Feature>,

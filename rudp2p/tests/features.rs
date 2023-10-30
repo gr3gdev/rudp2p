@@ -38,13 +38,13 @@ fn configure(port: u16) -> Configuration {
 
 fn main() {
     let report = if cfg!(feature = "ssl") {
-        "reports/ssl.md"
+        "../reports/ssl.md"
     } else {
-        "reports/default.md"
+        "../reports/default.md"
     };
     let output = fs::File::create(report).unwrap();
     let writer = Markdown::new(output);
-    futures::executor::block_on(
+    let res = futures::executor::block_on(
         PeersWorld::cucumber()
             .fail_fast()
             .max_concurrent_scenarios(5)
@@ -58,4 +58,5 @@ fn main() {
             )
             .run("features"),
     );
+    assert!(!res.is_failed(), "Features failed");
 }

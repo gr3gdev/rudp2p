@@ -23,36 +23,11 @@ pub(crate) fn generate_uid(prefix: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{decoder::Decoder, encoder::Encoder};
-
-    #[test]
-    fn add() {
-        let list = Encoder::add(&Vec::new(), &vec![1, 2, 3]);
-        assert_eq!(vec![1, 2, 3], list);
-    }
-
-    #[test]
-    fn add_size() {
-        let list = Encoder::add_size(&Vec::new(), 3);
-        assert_eq!(vec![3, 0, 0, 0, 0, 0, 0, 0], list);
-    }
-
-    #[test]
-    fn add_with_size() {
-        let list = Encoder::add_with_size(&Vec::new(), &vec![1, 2, 3]);
-        assert_eq!(vec![3, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3], list);
-    }
-
-    #[test]
-    fn get_size() {
-        let (size, next_index) = Decoder::get_size(&vec![3, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3], 0);
-        assert_eq!(3, size);
-        assert_eq!(8, next_index);
-    }
-
     #[test]
     #[cfg(feature = "ssl")]
     fn encrypt_decrypt() {
+        use crate::utils::{encoder::Encoder, decoder::Decoder};
+
         let rsa = openssl::rsa::Rsa::generate(1024).unwrap();
         let pk = rsa.public_key_to_pem().unwrap();
         let data = "Simple text's test.".as_bytes().to_vec();
