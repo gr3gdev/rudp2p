@@ -14,33 +14,28 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: .
-
     steps:
       - uses: actions/checkout@v3
 
       - name: Prepare tests
-        run: docker-compose -f tests/compose.yml up -d
+        run: docker-compose -f rudp2p/tests/compose.yml up -d
 
       - name: Build
         run: cargo build --verbose
 
       - name: Compatibility WASM
-        working-directory: ./wasm
         run: |
           rustup target add wasm32-unknown-unknown
           cargo build --lib --target wasm32-unknown-unknown
 
-      - name: Run tests with default features
-        run: cargo test
-
-      - name: Run tests with feature ""ssl"
-        run: cargo test --features="ssl"
+      - name: Run tests
+        working-directory: ./rudp2p
+        run: |
+          cargo test
+          cargo test --features="ssl"
         
       - name: Clear tests
-        run: docker-compose -f tests/compose.yml down
+        run: docker-compose -f rudp2p/tests/compose.yml down
 
       - name: Push reports
         if: github.ref_name != 'master'
