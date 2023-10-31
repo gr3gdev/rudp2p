@@ -14,5 +14,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - name: Publish
-        run: cargo publish --token $CARGO_API_TOKEN
+      - name: Publish rudp2p
+        run: cargo publish -p rudp2p --token $CARGO_API_TOKEN
+      - name: Publish rudp2p_derive
+        run: cargo publish -p rudp2p_derive --token $CARGO_API_TOKEN
