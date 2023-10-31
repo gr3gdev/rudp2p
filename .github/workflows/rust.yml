@@ -23,19 +23,19 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      - name: Compatibility WASM
-        run: |
-          rustup target add wasm32-unknown-unknown
-          cargo build --lib --target wasm32-unknown-unknown
-
       - name: Run tests
-        working-directory: ./rudp2p
         run: |
           cargo test
           cargo test --features="ssl"
         
       - name: Clear tests
         run: docker-compose -f rudp2p/tests/compose.yml down
+
+      - name: Compatibility WASM
+        working-directory: ./wasm
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --lib --target wasm32-unknown-unknown
 
       - name: Push reports
         if: github.ref_name != 'master'
