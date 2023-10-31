@@ -322,6 +322,7 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "serialize_bits",
 ]
 
 [[package]]
@@ -342,6 +343,12 @@ name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
+
+[[package]]
+name = "serialize_bits"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd889dbc3a77cf3b3084bde3089d2315dda211e31c45563ee81880b899f79911"
 
 [[package]]
 name = "slab"

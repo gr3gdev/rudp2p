@@ -3,4 +3,7 @@ members = [
     "rudp2p",
     "rudp2p_derive",
 ]
+exclude = [
+    "wasm",
+]
 resolver = "2"
