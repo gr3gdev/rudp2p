@@ -2,6 +2,5 @@
 members = [
     "rudp2p",
     "rudp2p_derive",
-    "wasm",
 ]
 resolver = "2"
